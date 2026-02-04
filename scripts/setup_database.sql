@@ -1,119 +1,336 @@
--- Database setup script for SPCS applications
--- Replace SPCS_APP_DB with your actual database name
+-- Database setup script for Data Catalog application
+-- Creates catalog infrastructure and metadata tables
+-- Deploys using SYSADMIN role
 
--- Use the app role and create new database/schema as intended by deploy script
-USE ROLE APP_SPCS_ROLE;
-USE WAREHOUSE COMPUTE_WH;
+-- Create catalog database
+CREATE DATABASE IF NOT EXISTS CATALOG_DB
+COMMENT = 'Data Catalog application database';
 
--- Create application database (APP_SPCS_ROLE automatically owns what it creates)
-CREATE DATABASE IF NOT EXISTS SPCS_APP_DB
-COMMENT = 'Database for SPCS application';
+-- Create catalog schema
+CREATE SCHEMA IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA
+COMMENT = 'Main schema for catalog tables and metadata';
 
--- Create application schema (APP_SPCS_ROLE automatically owns what it creates)
-CREATE SCHEMA IF NOT EXISTS SPCS_APP_DB.APP_SCHEMA
-COMMENT = 'Main schema for application data and objects';
+-- ============================================================================
+-- METADATA TABLES
+-- ============================================================================
 
-USE DATABASE SPCS_APP_DB;
-USE SCHEMA APP_SCHEMA;
-
--- Create realistic sales analytics tables
-CREATE TABLE IF NOT EXISTS CUSTOMERS (
-    customer_id INTEGER AUTOINCREMENT,
-    customer_name STRING NOT NULL,
-    email STRING,
-    city STRING,
-    state STRING,
-    signup_date DATE,
-    PRIMARY KEY (customer_id)
+-- Table to store cached metadata from INFORMATION_SCHEMA
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA (
+    DATABASE_NAME STRING NOT NULL,
+    SCHEMA_NAME STRING NOT NULL,
+    TABLE_NAME STRING NOT NULL,
+    TABLE_TYPE STRING,
+    ROW_COUNT NUMBER,
+    BYTES NUMBER,
+    CREATED TIMESTAMP_NTZ,
+    LAST_ALTERED TIMESTAMP_NTZ,
+    COMMENT STRING,
+    CACHED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (DATABASE_NAME, SCHEMA_NAME, TABLE_NAME)
 )
-COMMENT = 'Customer information for sales analytics';
+COMMENT = 'Cached table and view metadata from all databases';
 
-CREATE TABLE IF NOT EXISTS PRODUCTS (
-    product_id INTEGER AUTOINCREMENT,
-    product_name STRING NOT NULL,
-    category STRING,
-    price DECIMAL(10,2),
-    PRIMARY KEY (product_id)
+-- Table to store column-level metadata
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_COLUMNS (
+    FULL_TABLE_NAME STRING NOT NULL,
+    COLUMN_NAME STRING NOT NULL,
+    DATA_TYPE STRING,
+    IS_NULLABLE STRING,
+    COMMENT STRING,
+    ORDINAL_POSITION NUMBER,
+    PRIMARY KEY (FULL_TABLE_NAME, COLUMN_NAME)
 )
-COMMENT = 'Product catalog for sales analytics';
+COMMENT = 'Column-level metadata for all tables';
 
-CREATE TABLE IF NOT EXISTS ORDERS (
-    order_id INTEGER AUTOINCREMENT,
-    customer_id INTEGER,
-    product_id INTEGER,
-    quantity INTEGER,
-    order_date DATE,
-    total_amount DECIMAL(10,2),
-    status STRING DEFAULT 'completed',
-    PRIMARY KEY (order_id),
-    FOREIGN KEY (customer_id) REFERENCES CUSTOMERS(customer_id),
-    FOREIGN KEY (product_id) REFERENCES PRODUCTS(product_id)
+-- ============================================================================
+-- USER-GENERATED CONTENT TABLES
+-- ============================================================================
+
+-- User ratings for tables (5-star system)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.USER_RATINGS (
+    TABLE_FULL_NAME STRING NOT NULL,
+    USER_NAME STRING NOT NULL,
+    RATING NUMBER NOT NULL,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TABLE_FULL_NAME, USER_NAME)
 )
-COMMENT = 'Sales orders for analytics dashboard';
+COMMENT = 'User ratings for tables (1-5 stars)';
 
--- Insert sample customers
-INSERT INTO CUSTOMERS (customer_name, email, city, state, signup_date) VALUES 
-    ('Alice Johnson', 'alice@email.com', 'Seattle', 'WA', '2023-01-15'),
-    ('Bob Smith', 'bob@email.com', 'Portland', 'OR', '2023-02-20'),
-    ('Carol Davis', 'carol@email.com', 'San Francisco', 'CA', '2023-03-10'),
-    ('David Wilson', 'david@email.com', 'Denver', 'CO', '2023-04-05'),
-    ('Emma Brown', 'emma@email.com', 'Austin', 'TX', '2023-05-12'),
-    ('Frank Miller', 'frank@email.com', 'Chicago', 'IL', '2023-06-18'),
-    ('Grace Lee', 'grace@email.com', 'Boston', 'MA', '2023-07-22'),
-    ('Henry Taylor', 'henry@email.com', 'Miami', 'FL', '2023-08-30'),
-    ('Ivy Chen', 'ivy@email.com', 'Los Angeles', 'CA', '2023-09-14'),
-    ('Jack Garcia', 'jack@email.com', 'Phoenix', 'AZ', '2023-10-08');
+-- User comments and discussions
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.USER_COMMENTS (
+    COMMENT_ID STRING DEFAULT UUID_STRING(),
+    TABLE_FULL_NAME STRING NOT NULL,
+    USER_NAME STRING NOT NULL,
+    COMMENT_TEXT STRING NOT NULL,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (COMMENT_ID)
+)
+COMMENT = 'User comments and discussions for tables';
 
--- Insert sample products
-INSERT INTO PRODUCTS (product_name, category, price) VALUES 
-    ('Wireless Headphones', 'Electronics', 129.99),
-    ('Coffee Maker', 'Appliances', 89.99),
-    ('Running Shoes', 'Sports', 149.99),
-    ('Laptop Stand', 'Electronics', 39.99),
-    ('Yoga Mat', 'Sports', 29.99),
-    ('Smart Watch', 'Electronics', 299.99),
-    ('Blender', 'Appliances', 79.99),
-    ('Desk Lamp', 'Furniture', 49.99),
-    ('Water Bottle', 'Sports', 19.99),
-    ('Bluetooth Speaker', 'Electronics', 79.99);
+-- Wiki-style user documentation
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_DESCRIPTIONS (
+    TABLE_FULL_NAME STRING NOT NULL,
+    USER_DESCRIPTION STRING,
+    LAST_UPDATED_BY STRING,
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TABLE_FULL_NAME)
+)
+COMMENT = 'User-contributed wiki-style descriptions';
 
--- Insert sample orders (last 6 months of realistic sales data)
-INSERT INTO ORDERS (customer_id, product_id, quantity, order_date, total_amount) VALUES 
-    (1, 1, 1, '2024-01-15', 129.99),
-    (2, 3, 1, '2024-01-18', 149.99),
-    (3, 2, 2, '2024-01-22', 179.98),
-    (1, 6, 1, '2024-02-05', 299.99),
-    (4, 4, 1, '2024-02-10', 39.99),
-    (5, 5, 3, '2024-02-14', 89.97),
-    (2, 8, 1, '2024-02-20', 49.99),
-    (6, 1, 2, '2024-03-01', 259.98),
-    (7, 7, 1, '2024-03-08', 79.99),
-    (3, 9, 4, '2024-03-15', 79.96),
-    (8, 10, 1, '2024-03-22', 79.99),
-    (9, 6, 1, '2024-04-02', 299.99),
-    (1, 5, 1, '2024-04-10', 29.99),
-    (10, 3, 1, '2024-04-18', 149.99),
-    (4, 2, 1, '2024-04-25', 89.99),
-    (5, 8, 2, '2024-05-05', 99.98),
-    (6, 4, 3, '2024-05-12', 119.97),
-    (2, 9, 2, '2024-05-20', 39.98),
-    (7, 1, 1, '2024-05-28', 129.99),
-    (8, 7, 1, '2024-06-03', 79.99),
-    (9, 10, 2, '2024-06-10', 159.98),
-    (10, 6, 1, '2024-06-15', 299.99),
-    (3, 5, 2, '2024-06-22', 59.98),
-    (1, 2, 1, '2024-06-28', 89.99);
+-- ============================================================================
+-- ACCESS REQUEST WORKFLOW TABLES
+-- ============================================================================
 
--- Verify setup
-SELECT 'Sales Analytics Database created successfully' as status;
-SELECT COUNT(*) as customer_count FROM CUSTOMERS;
-SELECT COUNT(*) as product_count FROM PRODUCTS;
-SELECT COUNT(*) as order_count FROM ORDERS;
-SELECT SUM(total_amount) as total_revenue FROM ORDERS;
+-- Access request tracking (for data access grants)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.ACCESS_REQUESTS (
+    REQUEST_ID STRING DEFAULT UUID_STRING(),
+    TABLE_FULL_NAME STRING NOT NULL,
+    REQUESTER STRING NOT NULL,
+    JUSTIFICATION STRING NOT NULL,
+    STATUS STRING DEFAULT 'pending',
+    APPROVER STRING,
+    DECISION_DATE TIMESTAMP_NTZ,
+    DECISION_COMMENT STRING,
+    REQUESTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    ACCESS_START_DATE DATE,
+    ACCESS_END_DATE DATE,
+    ACCESS_TYPE STRING DEFAULT 'ROLE',
+    GRANT_TO_NAME STRING,
+    ASSIGNED_TO STRING,
+    ADDITIONAL_INFO STRING,
+    PRIMARY KEY (REQUEST_ID)
+)
+COMMENT = 'Data access request workflow tracking';
+
+-- ============================================================================
+-- BUSINESS GLOSSARY TABLES
+-- ============================================================================
+
+-- Global attribute definitions (e.g., "filing_type", "status")
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.ATTRIBUTE_DEFINITIONS (
+    ATTRIBUTE_NAME STRING NOT NULL,
+    DISPLAY_NAME STRING,
+    DESCRIPTION STRING,
+    CREATED_BY STRING,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_BY STRING,
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (ATTRIBUTE_NAME)
+)
+COMMENT = 'Global business attribute definitions';
+
+-- Enumerated values for attributes
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.ATTRIBUTE_ENUMERATIONS (
+    ENUMERATION_ID STRING DEFAULT UUID_STRING(),
+    ATTRIBUTE_NAME STRING NOT NULL,
+    VALUE_CODE STRING NOT NULL,
+    VALUE_DESCRIPTION STRING,
+    SORT_ORDER NUMBER DEFAULT 0,
+    IS_ACTIVE BOOLEAN DEFAULT TRUE,
+    CREATED_BY STRING,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_BY STRING,
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (ENUMERATION_ID)
+)
+COMMENT = 'Enumerated values for business attributes';
+
+-- Links table columns to global attributes
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.COLUMN_ATTRIBUTES (
+    LINK_ID STRING DEFAULT UUID_STRING(),
+    TABLE_FULL_NAME STRING NOT NULL,
+    COLUMN_NAME STRING NOT NULL,
+    ATTRIBUTE_NAME STRING NOT NULL,
+    LINKED_BY STRING,
+    LINKED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (LINK_ID)
+)
+COMMENT = 'Links table columns to global business attributes';
+
+-- Change request workflow for content changes (descriptions, tags, enumerations)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CHANGE_REQUESTS (
+    REQUEST_ID STRING DEFAULT UUID_STRING(),
+    REQUEST_TYPE STRING NOT NULL,
+    TARGET_OBJECT STRING NOT NULL,
+    REQUESTER STRING NOT NULL,
+    JUSTIFICATION STRING NOT NULL,
+    PROPOSED_CHANGE VARIANT,
+    CURRENT_VALUE VARIANT,
+    STATUS STRING DEFAULT 'pending',
+    ASSIGNED_TO STRING,
+    APPROVER STRING,
+    DECISION_DATE TIMESTAMP_NTZ,
+    DECISION_COMMENT STRING,
+    REQUESTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (REQUEST_ID)
+)
+COMMENT = 'Change request workflow for descriptions, tags, and enumerations';
+
+-- ============================================================================
+-- ENRICHED VIEWS
+-- ============================================================================
+
+-- Create enriched view combining metadata with user content
+CREATE OR REPLACE VIEW CATALOG_DB.CATALOG_SCHEMA.ENRICHED_CATALOG AS
+SELECT 
+    m.DATABASE_NAME,
+    m.SCHEMA_NAME,
+    m.TABLE_NAME,
+    m.DATABASE_NAME || '.' || m.SCHEMA_NAME || '.' || m.TABLE_NAME as FULL_TABLE_NAME,
+    m.TABLE_TYPE,
+    m.ROW_COUNT,
+    m.BYTES,
+    ROUND(m.BYTES / 1024.0 / 1024.0 / 1024.0, 2) as SIZE_GB,
+    m.CREATED,
+    m.LAST_ALTERED,
+    m.COMMENT as SYSTEM_COMMENT,
+    d.USER_DESCRIPTION,
+    d.LAST_UPDATED_BY as DESCRIPTION_AUTHOR,
+    d.UPDATED_AT as DESCRIPTION_UPDATED,
+    COALESCE(AVG(r.RATING), 0) as AVG_RATING,
+    COUNT(DISTINCT r.USER_NAME) as RATING_COUNT,
+    COUNT(DISTINCT c.COMMENT_ID) as COMMENT_COUNT,
+    COALESCE(p.VIEW_COUNT, 0) as VIEW_COUNT,
+    COALESCE(p.UNIQUE_VIEWERS, 0) as UNIQUE_VIEWERS,
+    p.LAST_VIEWED,
+    m.CACHED_AT
+FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA m
+LEFT JOIN CATALOG_DB.CATALOG_SCHEMA.TABLE_DESCRIPTIONS d 
+    ON m.DATABASE_NAME || '.' || m.SCHEMA_NAME || '.' || m.TABLE_NAME = d.TABLE_FULL_NAME
+LEFT JOIN CATALOG_DB.CATALOG_SCHEMA.USER_RATINGS r 
+    ON m.DATABASE_NAME || '.' || m.SCHEMA_NAME || '.' || m.TABLE_NAME = r.TABLE_FULL_NAME
+LEFT JOIN CATALOG_DB.CATALOG_SCHEMA.USER_COMMENTS c 
+    ON m.DATABASE_NAME || '.' || m.SCHEMA_NAME || '.' || m.TABLE_NAME = c.TABLE_FULL_NAME
+LEFT JOIN CATALOG_DB.CATALOG_SCHEMA.TABLE_POPULARITY p
+    ON m.DATABASE_NAME || '.' || m.SCHEMA_NAME || '.' || m.TABLE_NAME = p.TABLE_FULL_NAME
+GROUP BY 
+    m.DATABASE_NAME, m.SCHEMA_NAME, m.TABLE_NAME, m.TABLE_TYPE,
+    m.ROW_COUNT, m.BYTES, m.CREATED, m.LAST_ALTERED, m.COMMENT,
+    d.USER_DESCRIPTION, d.LAST_UPDATED_BY, d.UPDATED_AT, m.CACHED_AT,
+    p.VIEW_COUNT, p.UNIQUE_VIEWERS, p.LAST_VIEWED;
+
+-- ============================================================================
+-- GRANT PERMISSIONS TO CATALOG_ROLE ON ALL DATABASES
+-- ============================================================================
+
+-- Table to track dataset popularity (views/accesses)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_POPULARITY (
+    TABLE_FULL_NAME STRING NOT NULL,
+    VIEW_COUNT NUMBER DEFAULT 0,
+    LAST_VIEWED TIMESTAMP_NTZ,
+    UNIQUE_VIEWERS NUMBER DEFAULT 0,
+    PRIMARY KEY (TABLE_FULL_NAME)
+)
+COMMENT = 'Dataset popularity metrics';
+
+-- Table for user-defined tags
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_TAGS (
+    TAG_ID STRING DEFAULT UUID_STRING(),
+    TABLE_FULL_NAME STRING NOT NULL,
+    TAG_NAME STRING NOT NULL,
+    CREATED_BY STRING NOT NULL,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TAG_ID)
+)
+COMMENT = 'User-defined tags for datasets';
+
+-- Table for lineage information
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_LINEAGE (
+    LINEAGE_ID STRING DEFAULT UUID_STRING(),
+    SOURCE_TABLE STRING NOT NULL,
+    TARGET_TABLE STRING NOT NULL,
+    LINEAGE_TYPE STRING NOT NULL,
+    DISCOVERED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (LINEAGE_ID)
+)
+COMMENT = 'Data lineage relationships between tables';
+
+-- Note: In a real deployment, you would need to grant USAGE on all existing databases
+-- This script provides a template - execute these grants as ACCOUNTADMIN for each database:
+-- GRANT USAGE ON DATABASE <database_name> TO ROLE SYSADMIN;
+-- GRANT USAGE ON ALL SCHEMAS IN DATABASE <database_name> TO ROLE SYSADMIN;
+-- GRANT SELECT ON ALL TABLES IN DATABASE <database_name> TO ROLE SYSADMIN;
+-- GRANT SELECT ON ALL VIEWS IN DATABASE <database_name> TO ROLE SYSADMIN;
+-- GRANT SELECT ON FUTURE TABLES IN DATABASE <database_name> TO ROLE SYSADMIN;
+-- GRANT SELECT ON FUTURE VIEWS IN DATABASE <database_name> TO ROLE SYSADMIN;
+
+-- ============================================================================
+-- INITIAL METADATA POPULATION PROCEDURE
+-- ============================================================================
+
+-- Create procedure to refresh catalog metadata
+CREATE OR REPLACE PROCEDURE CATALOG_DB.CATALOG_SCHEMA.REFRESH_CATALOG_METADATA()
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+    -- Clear existing metadata
+    DELETE FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA;
+    
+    -- Populate from all accessible databases
+    INSERT INTO CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA (
+        DATABASE_NAME, SCHEMA_NAME, TABLE_NAME, TABLE_TYPE,
+        ROW_COUNT, BYTES, CREATED, LAST_ALTERED, COMMENT
+    )
+    SELECT 
+        TABLE_CATALOG as DATABASE_NAME,
+        TABLE_SCHEMA as SCHEMA_NAME,
+        TABLE_NAME,
+        TABLE_TYPE,
+        ROW_COUNT,
+        BYTES,
+        CREATED,
+        LAST_ALTERED,
+        COMMENT
+    FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
+    WHERE TABLE_SCHEMA != 'INFORMATION_SCHEMA'
+      AND TABLE_CATALOG != 'SNOWFLAKE'
+      AND DELETED IS NULL;
+    
+    -- Clear existing column metadata
+    DELETE FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_COLUMNS;
+    
+    -- Populate column metadata
+    INSERT INTO CATALOG_DB.CATALOG_SCHEMA.CATALOG_COLUMNS (
+        FULL_TABLE_NAME, COLUMN_NAME, DATA_TYPE,
+        IS_NULLABLE, COMMENT, ORDINAL_POSITION
+    )
+    SELECT 
+        TABLE_CATALOG || '.' || TABLE_SCHEMA || '.' || TABLE_NAME as FULL_TABLE_NAME,
+        COLUMN_NAME,
+        DATA_TYPE,
+        IS_NULLABLE,
+        COMMENT,
+        ORDINAL_POSITION
+    FROM SNOWFLAKE.ACCOUNT_USAGE.COLUMNS
+    WHERE TABLE_SCHEMA != 'INFORMATION_SCHEMA'
+      AND TABLE_CATALOG != 'SNOWFLAKE'
+      AND DELETED IS NULL;
+    
+    RETURN 'Catalog metadata refreshed successfully';
+END;
+$$;
+
+-- ============================================================================
+-- VERIFY SETUP
+-- ============================================================================
+
+SELECT 'Data Catalog Database created successfully' as status;
+SELECT 'Tables created: CATALOG_METADATA, CATALOG_COLUMNS, USER_RATINGS, USER_COMMENTS, TABLE_DESCRIPTIONS, ACCESS_REQUESTS' as tables;
 
 -- Show current configuration
 SELECT CURRENT_DATABASE() as database_name, 
        CURRENT_SCHEMA() as schema_name,
        CURRENT_ROLE() as role_name,
        CURRENT_WAREHOUSE() as warehouse_name;
+
+-- Run initial metadata refresh
+CALL CATALOG_DB.CATALOG_SCHEMA.REFRESH_CATALOG_METADATA();
+
+-- Show statistics
+SELECT COUNT(*) as total_tables FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA;
+SELECT COUNT(*) as total_columns FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_COLUMNS;
+SELECT COUNT(DISTINCT DATABASE_NAME) as databases_scanned FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA;
 

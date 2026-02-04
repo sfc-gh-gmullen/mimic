@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# Unified SPCS Deployment Script
-# This script supports both local setup and full SPCS deployment
-# Follows the .cursorrules guidelines for SPCS deployment
+# SPCS Deployment Script for Data Catalog
+# Optimized for Snowflake-only deployment
 
 set -e
 
@@ -14,36 +13,40 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-APP_NAME="spcs-sales-analytics"
-DATABASE_NAME="SPCS_APP_DB"
-SCHEMA_NAME="APP_SCHEMA"
-SERVICE_NAME="SPCS_APP_SERVICE"
+APP_NAME="data-catalog"
+DATABASE_NAME="CATALOG_DB"
+SCHEMA_NAME="CATALOG_SCHEMA"
+SERVICE_NAME="CATALOG_SERVICE"
 IMAGE_TAG="latest"
+CONNECTION="demo142_cursor"
 
 # Parse command line arguments
-DEPLOYMENT_MODE="spcs"  # Default to full SPCS deployment
+SKIP_DB_SETUP=false
+SKIP_BUILD=false
 
 show_usage() {
-    echo "Usage: $0 [--local|--spcs]"
+    echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Deployment Modes:"
-    echo "  --local    Setup database and role for local development only"
-    echo "  --spcs     Full SPCS deployment with Docker build and service (default)"
+    echo "Options:"
+    echo "  --skip-db      Skip database setup (use when DB already configured)"
+    echo "  --skip-build   Skip npm build (use when only deploying existing build)"
+    echo "  --help, -h     Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 --local    # Setup database for local development"
-    echo "  $0 --spcs     # Full SPCS deployment"
-    echo "  $0            # Full SPCS deployment (default)"
+    echo "  $0                       # Full deployment"
+    echo "  $0 --skip-db             # Skip DB setup, rebuild and deploy"
+    echo "  $0 --skip-build          # Setup DB, use existing build"
+    echo "  $0 --skip-db --skip-build # Quick redeploy (image push + service restart)"
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --local)
-            DEPLOYMENT_MODE="local"
+        --skip-db)
+            SKIP_DB_SETUP=true
             shift
             ;;
-        --spcs)
-            DEPLOYMENT_MODE="spcs"
+        --skip-build)
+            SKIP_BUILD=true
             shift
             ;;
         --help|-h)
@@ -58,16 +61,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ "$DEPLOYMENT_MODE" = "local" ]; then
-    echo -e "${BLUE}🏠 Starting local development setup...${NC}"
-    echo -e "${BLUE}Mode: Local Database Setup${NC}"
-else
-    echo -e "${BLUE}🚀 Starting full SPCS deployment...${NC}"
-    echo -e "${BLUE}Mode: Complete SPCS Deployment${NC}"
-fi
-
-echo -e "${BLUE}App: ${APP_NAME}${NC}"
-echo -e "${BLUE}Database: ${DATABASE_NAME}${NC}"
+echo -e "${BLUE}🚀 SPCS Deployment for ${APP_NAME}${NC}"
 
 # Check if we're in the right directory
 if [ ! -f "package.json" ]; then
@@ -75,170 +69,76 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-# Step 1: Setup database and role (ALWAYS required)
-echo -e "${YELLOW}🗄️  Setting up application role and warehouse...${NC}"
-snowsql -c default -f scripts/create_app_role.sql
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to create application role or warehouse${NC}"
-    exit 1
+# Step 1: Database setup (skippable)
+if [ "$SKIP_DB_SETUP" = false ]; then
+    echo -e "${YELLOW}🗄️  Setting up database...${NC}"
+    snow sql -f scripts/create_app_role.sql -c $CONNECTION
+    snow sql -f scripts/setup_database.sql -c $CONNECTION
+    snow sql -f snowflake/setup_image_repo.sql -c $CONNECTION
+else
+    echo -e "${BLUE}⏭️  Skipping database setup${NC}"
 fi
 
-echo -e "${YELLOW}💾 Setting up database and sample data...${NC}"
-snowsql -c default -f scripts/setup_database.sql
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to setup database or sample data${NC}"
-    exit 1
+# Step 2: Build React app (skippable)
+if [ "$SKIP_BUILD" = false ]; then
+    echo -e "${YELLOW}⚛️  Building React application...${NC}"
+    npm run build
+else
+    echo -e "${BLUE}⏭️  Skipping React build${NC}"
 fi
 
-# For local mode, set up environment variables and start server
-if [ "$DEPLOYMENT_MODE" = "local" ]; then
-    echo -e "${YELLOW}⚙️  Setting up environment variables for local development...${NC}"
-    
-    # Create .env file for local development
-    cat > .env.local << EOF
-# Snowflake Configuration for Local Development
-SNOWFLAKE_ROLE=APP_SPCS_ROLE
-SNOWFLAKE_WAREHOUSE=COMPUTE_WH
-SNOWFLAKE_DATABASE=${DATABASE_NAME}
-SNOWFLAKE_SCHEMA=${SCHEMA_NAME}
-
-# Note: SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD 
-# should be set as environment variables or will be read from ~/.snowsql/config
-EOF
-
-    echo -e "${GREEN}🎉 Local development setup completed successfully!${NC}"
-    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}📋 Local Setup Summary:${NC}"
-    echo -e "${GREEN}   • Database: ${DATABASE_NAME}${NC}"
-    echo -e "${GREEN}   • Schema: ${SCHEMA_NAME}${NC}"
-    echo -e "${GREEN}   • Warehouse: COMPUTE_WH${NC}"
-    echo -e "${GREEN}   • Role: APP_SPCS_ROLE${NC}"
-    echo -e "${GREEN}   • Sample Data: ✅ 10 customers, 10 products, 24 orders${NC}"
-    echo -e "${GREEN}   • Environment: .env.local created${NC}"
-    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}💡 Next Steps:${NC}"
-    echo -e "${YELLOW}   1. Build React app: npm run build${NC}"
-    echo -e "${YELLOW}   2. Start local server with env vars:${NC}"
-    echo -e "${YELLOW}      export SNOWFLAKE_ROLE=APP_SPCS_ROLE${NC}"
-    echo -e "${YELLOW}      export SNOWFLAKE_WAREHOUSE=COMPUTE_WH${NC}"
-    echo -e "${YELLOW}      export SNOWFLAKE_DATABASE=${DATABASE_NAME}${NC}"
-    echo -e "${YELLOW}      export SNOWFLAKE_SCHEMA=${SCHEMA_NAME}${NC}"
-    echo -e "${YELLOW}      npm start${NC}"
-    echo -e "${YELLOW}   3. Access dashboard: http://localhost:3002${NC}"
-    echo -e "${YELLOW}   4. Deploy to SPCS: ./deploy.sh --spcs${NC}"
-    exit 0
-fi
-
-# SPCS-only steps continue below...
-echo -e "${YELLOW}📦 Setting up image repository...${NC}"
-snowsql -c default -f snowflake/setup_image_repo.sql
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to setup image repository${NC}"
-    exit 1
-fi
-
-# Step 3: Build the React application
-echo -e "${YELLOW}⚛️  Building React application...${NC}"
-npm run build
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to build React application${NC}"
-    exit 1
-fi
-
-# Step 4: Build Docker image
-echo -e "${YELLOW}🐳 Building Docker image...${NC}"
-docker build --platform linux/amd64 -t ${APP_NAME}:${IMAGE_TAG} .
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to build Docker image${NC}"
-    exit 1
-fi
-
-# Step 5: Get registry URL first for proper tagging
-echo -e "${YELLOW}🔍 Getting Snowflake registry URL for tagging...${NC}"
-REGISTRY_URL=$(snowsql -c default -q "SHOW IMAGE REPOSITORIES IN SCHEMA ${DATABASE_NAME}.IMAGE_SCHEMA;" -o output_format=plain -o header=false -o friendly=false -o timing=false | awk '{print $7}')
+# Step 3: Get registry URL
+echo -e "${YELLOW}🔍 Getting registry URL...${NC}"
+REGISTRY_URL=$(snow sql -q "SHOW IMAGE REPOSITORIES IN SCHEMA ${DATABASE_NAME}.IMAGE_SCHEMA;" -c $CONNECTION --format CSV | grep IMAGE_REPO | cut -d',' -f5 | tr -d '"')
 if [ -z "$REGISTRY_URL" ]; then
     echo -e "${RED}❌ Failed to get registry URL${NC}"
     exit 1
 fi
-echo -e "${GREEN}Registry URL: ${REGISTRY_URL}${NC}"
 
-# Step 6: Tag image for Snowflake
-echo -e "${YELLOW}🏷️  Tagging image for Snowflake...${NC}"
+# Step 4: Build, tag, and push Docker image
+echo -e "${YELLOW}🐳 Building and pushing Docker image...${NC}"
 SNOWFLAKE_IMAGE_URL="${REGISTRY_URL}/${APP_NAME}:${IMAGE_TAG}"
-docker tag ${APP_NAME}:${IMAGE_TAG} ${SNOWFLAKE_IMAGE_URL}
-echo -e "${GREEN}Tagged as: ${SNOWFLAKE_IMAGE_URL}${NC}"
 
-# Step 7: Login to Snowflake SPCS registry
-echo -e "${YELLOW}🔐 Logging into Snowflake SPCS registry...${NC}"
-snow spcs image-registry login
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to login to Snowflake SPCS registry${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✅ Successfully logged into Snowflake SPCS registry${NC}"
+# Build and tag in one step
+docker build --platform linux/amd64 -t ${SNOWFLAKE_IMAGE_URL} .
 
-# Step 8: Push image to Snowflake
-echo -e "${YELLOW}🚀 Pushing image to Snowflake...${NC}"
+# Login and push
+snow spcs image-registry login -c $CONNECTION
 docker push ${SNOWFLAKE_IMAGE_URL}
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to push image to Snowflake${NC}"
-    exit 1
-fi
 
-# Step 9: Deploy service
+# Step 5: Deploy service (restart with new image)
 echo -e "${YELLOW}☁️  Deploying SPCS service...${NC}"
-snowsql -c default -f snowflake/deploy.sql
-if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Failed to deploy service${NC}"
-    exit 1
-fi
+snow sql -q "ALTER SERVICE IF EXISTS ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME} SUSPEND;" -c $CONNECTION 2>/dev/null || true
+snow sql -f snowflake/deploy.sql -c $CONNECTION
 
-# Step 10: Wait for service to be ready and get endpoint
-echo -e "${YELLOW}⏳ Waiting for service to be ready...${NC}"
-sleep 10
-
+# Step 6: Wait for service ready
+echo -e "${YELLOW}⏳ Waiting for service...${NC}"
 for i in {1..30}; do
-    STATUS=$(snowsql -c default -q "SELECT SYSTEM\$GET_SERVICE_STATUS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}');" -o output_format=plain -o header=false -o friendly=false -o timing=false | tr -d '[:space:]')
-    echo -e "${BLUE}Service status: ${STATUS}${NC}"
+    STATUS=$(snow sql -q "SELECT SYSTEM\$GET_SERVICE_STATUS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}');" -c $CONNECTION --format CSV 2>/dev/null | tail -1)
     
     if [[ "$STATUS" == *"READY"* ]]; then
-        echo -e "${GREEN}✅ Service is ready!${NC}"
+        echo -e "${GREEN}✅ Service ready!${NC}"
         break
     elif [[ "$STATUS" == *"FAILED"* ]]; then
-        echo -e "${RED}❌ Service deployment failed${NC}"
-        echo -e "${YELLOW}Check logs with: CALL SYSTEM\$GET_SERVICE_LOGS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}', '0');${NC}"
+        echo -e "${RED}❌ Deployment failed. Check logs:${NC}"
+        echo "snow sql -q \"CALL SYSTEM\$GET_SERVICE_LOGS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}', '0');\" -c $CONNECTION"
         exit 1
     fi
     
-    if [ $i -eq 30 ]; then
-        echo -e "${RED}❌ Service did not become ready within 5 minutes${NC}"
-        exit 1
-    fi
-    
+    [ $i -eq 30 ] && { echo -e "${RED}❌ Timeout waiting for service${NC}"; exit 1; }
     sleep 10
 done
 
-# Step 11: Get service endpoint
-echo -e "${YELLOW}🔗 Getting service endpoint...${NC}"
-ENDPOINT=$(snowsql -c default -q "SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};" -o output_format=plain -o header=false -o friendly=false -o timing=false | grep -E 'https://' | head -1 | awk '{print $NF}')
+# Step 7: Get and display endpoint
+sleep 5  # Brief wait for endpoint provisioning
+ENDPOINT=$(snow sql -q "SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};" -c $CONNECTION 2>&1 | grep -oE '[a-z0-9]+-[a-z0-9-]+\.snowflakecomputing\.app' | head -1)
 
-# Final summary for SPCS deployment
-echo -e "${GREEN}🎉 SPCS deployment completed successfully!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}📋 SPCS Deployment Summary:${NC}"
-echo -e "${GREEN}   • Database: ${DATABASE_NAME}${NC}"
-echo -e "${GREEN}   • Schema: ${SCHEMA_NAME}${NC}"
-echo -e "${GREEN}   • Service: ${SERVICE_NAME}${NC}"
-echo -e "${GREEN}   • Image: ${SNOWFLAKE_IMAGE_URL}${NC}"
-echo -e "${GREEN}   • Sample Data: ✅ 10 customers, 10 products, 24 orders${NC}"
+echo -e "${GREEN}🎉 Deployment complete!${NC}"
+echo -e "${GREEN}   Service: ${SERVICE_NAME}${NC}"
 if [ ! -z "$ENDPOINT" ]; then
-    echo -e "${GREEN}   • Endpoint: ${ENDPOINT}${NC}"
-    echo -e "${GREEN}   • Health Check: ${ENDPOINT}/api/health${NC}"
+    echo -e "${GREEN}   URL: https://${ENDPOINT}${NC}"
+else
+    echo -e "${YELLOW}   URL: Provisioning... run 'snow sql -q \"SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};\" -c $CONNECTION'${NC}"
 fi
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${YELLOW}💡 Useful Commands:${NC}"
-echo -e "${YELLOW}   • Check logs: CALL SYSTEM\$GET_SERVICE_LOGS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}', '0');${NC}"
-echo -e "${YELLOW}   • Check status: SELECT SYSTEM\$GET_SERVICE_STATUS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}');${NC}"
-echo -e "${YELLOW}   • Stop service: ALTER SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME} SUSPEND;${NC}"
-echo -e "${YELLOW}   • Start service: ALTER SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME} RESUME;${NC}"
-echo -e "${YELLOW}   • Local development: ./deploy.sh --local${NC}"

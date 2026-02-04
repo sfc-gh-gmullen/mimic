@@ -1,39 +1,35 @@
--- SPCS deployment script
+-- Data Catalog SPCS deployment script
 -- This script creates the compute pool and service
-
-USE ROLE APP_SPCS_ROLE;
-USE WAREHOUSE COMPUTE_WH;
-USE DATABASE SPCS_APP_DB;
-USE SCHEMA APP_SCHEMA;
+-- Deploys using SYSADMIN role
 
 -- Create compute pool if it doesn't exist
-CREATE COMPUTE POOL IF NOT EXISTS APP_COMPUTE_POOL
+CREATE COMPUTE POOL IF NOT EXISTS CATALOG_COMPUTE_POOL
   MIN_NODES = 1
   MAX_NODES = 2
   INSTANCE_FAMILY = CPU_X64_XS
   AUTO_RESUME = TRUE
   AUTO_SUSPEND_SECS = 300
-  COMMENT = 'Compute pool for SPCS application';
+  COMMENT = 'Compute pool for Data Catalog SPCS application';
 
 -- Note: Compute pool will be created and may take time to become active
--- Check compute pool status with: DESCRIBE COMPUTE POOL APP_COMPUTE_POOL;
+-- Check compute pool status with: DESCRIBE COMPUTE POOL CATALOG_COMPUTE_POOL;
 
 -- Create the service with explicit account
-DROP SERVICE IF EXISTS SPCS_APP_SERVICE;
+DROP SERVICE IF EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE;
 
-CREATE SERVICE IF NOT EXISTS SPCS_APP_SERVICE
-  IN COMPUTE POOL APP_COMPUTE_POOL
+CREATE SERVICE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE
+  IN COMPUTE POOL CATALOG_COMPUTE_POOL
   FROM SPECIFICATION $$
     spec:
       containers:
-      - name: "sales-analytics-app"
-        image: "/SPCS_APP_DB/IMAGE_SCHEMA/IMAGE_REPO/spcs-sales-analytics:latest"
+      - name: "data-catalog-app"
+        image: "/CATALOG_DB/IMAGE_SCHEMA/IMAGE_REPO/data-catalog:latest"
         env:
           PORT: "3002"
           SNOWFLAKE_WAREHOUSE: "COMPUTE_WH"
-          SNOWFLAKE_ROLE: "APP_SPCS_ROLE"
-          SNOWFLAKE_DATABASE: "SPCS_APP_DB"
-          SNOWFLAKE_SCHEMA: "APP_SCHEMA"
+          SNOWFLAKE_ROLE: "SYSADMIN"
+          SNOWFLAKE_DATABASE: "CATALOG_DB"
+          SNOWFLAKE_SCHEMA: "CATALOG_SCHEMA"
         resources:
           limits:
             memory: "6Gi"
@@ -42,19 +38,19 @@ CREATE SERVICE IF NOT EXISTS SPCS_APP_SERVICE
             memory: "0.5Gi"
             cpu: "0.5"
       endpoints:
-      - name: "app-endpoint"
+      - name: "catalog-endpoint"
         port: 3002
         public: true
   $$
-  COMMENT = 'SPCS Application Service';
+  COMMENT = 'Data Catalog SPCS Service';
 
 -- Check service status
-SELECT SYSTEM$GET_SERVICE_STATUS('SPCS_APP_SERVICE') as service_status;
+SELECT SYSTEM$GET_SERVICE_STATUS('CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE') as service_status;
 
 -- Show service details
 SHOW SERVICES;
-DESCRIBE SERVICE SPCS_APP_SERVICE;
+DESCRIBE SERVICE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE;
 
 -- Get service endpoints (run after service is ready)
-SHOW ENDPOINTS IN SERVICE SPCS_APP_SERVICE;
+SHOW ENDPOINTS IN SERVICE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE;
 

@@ -1,7 +1,7 @@
 {
-  "name": "spcs-sales-analytics",
+  "name": "data-catalog",
   "version": "1.0.0",
-  "description": "Sales Analytics Dashboard - SPCS Template with real business data",
+  "description": "Data Catalog - Discover and explore data across Snowflake databases with SPCS",
   "private": true,
   "dependencies": {
     "@testing-library/jest-dom": "^5.16.4",

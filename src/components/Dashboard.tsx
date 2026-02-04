@@ -153,9 +153,9 @@ const Dashboard: React.FC<DashboardProps> = () => {
   if (loading) {
     return (
       <div style={{ background: 'white', borderRadius: '8px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-        <h2>📈 Sales Analytics Dashboard</h2>
+        <h2>📊 Business Data Catalog</h2>
         <div style={{ textAlign: 'center', padding: '40px' }}>
-          <div>Loading sales analytics...</div>
+          <div>Loading data catalog...</div>
         </div>
       </div>
     );
@@ -164,7 +164,7 @@ const Dashboard: React.FC<DashboardProps> = () => {
   if (error) {
     return (
       <div style={{ background: 'white', borderRadius: '8px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-        <h2>📈 Sales Analytics Dashboard</h2>
+        <h2>📊 Business Data Catalog</h2>
         <div style={{ textAlign: 'center', padding: '40px', color: '#dc3545' }}>
           <div>{error}</div>
           <button 
@@ -200,8 +200,8 @@ const Dashboard: React.FC<DashboardProps> = () => {
           </div>
         </div>
       )}
-      <h2>📈 Sales Analytics Dashboard</h2>
-      <p>Real-time sales analytics powered by Snowflake data</p>
+      <h2>📊 Business Data Catalog</h2>
+      <p>Real-time data insights powered by Snowflake</p>
 
       {/* Filters */}
       <div style={{ 

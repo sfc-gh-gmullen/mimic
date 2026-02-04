@@ -1,36 +1,45 @@
-# 📊 Sales Analytics Dashboard - SPCS Template
+# 📚 Data Catalog - Snowflake SPCS
 
-A **complete example** of a React + Express.js sales analytics dashboard built for Snowflake's Snowpark Container Services (SPCS). This template provides a working, production-ready application that you can use as a starting point for your own SPCS projects.
+A **production-ready Data Catalog** built with React + Express.js for Snowflake's Snowpark Container Services (SPCS). Discover, explore, and collaborate on data across all your Snowflake databases.
 
-## 🎯 What This Template Provides
+## 🎯 What This Application Provides
 
-This isn't just a skeleton - it's a **fully functional sales analytics dashboard** featuring:
+A **fully functional data catalog** featuring:
 
-- 📈 **Real-time Sales Metrics**: Revenue, orders, customers, and growth analytics
-- 🛍️ **Product Analytics**: Top products by category with performance insights  
-- 📊 **Interactive Charts**: Monthly revenue trends, category breakdowns, and KPIs
-- 🎛️ **Dynamic Filtering**: Filter by time period (7/30/90 days) and product categories
-- 📱 **Responsive Design**: Modern, mobile-friendly interface with professional styling
-- 🔄 **Live Data**: Connects to Snowflake with real sample e-commerce data
+- 📊 **Comprehensive Metadata Discovery**: Automatic scanning of all accessible databases, schemas, and tables
+- 🔍 **Powerful Search & Filtering**: Find tables by name, description, database, schema, or type
+- ⭐ **User Ratings & Reviews**: 5-star rating system for data quality feedback
+- 💬 **Collaborative Comments**: Discussion threads on tables for knowledge sharing
+- 📝 **Wiki-Style Documentation**: User-contributed descriptions to complement system metadata
+- 🔐 **Access Request Workflow**: Governed data access with justification and approval tracking
+- 📈 **Rich Metadata Display**: Row counts, table sizes, column schemas, and modification dates
+- 🚀 **SPCS Native**: OAuth authentication, containerized deployment, auto-scaling
 
-## ✨ Dashboard Features
+## ✨ Data Catalog Features
 
-### 📊 **Key Metrics Display**
-- Total revenue with growth indicators
-- Order count and average order value
-- Customer count and repeat customer rate
-- Real-time calculations from Snowflake data
+### 🔍 **Discovery & Search**
+- Browse all tables across databases and schemas
+- Full-text search across table names and descriptions
+- Filter by database, schema, and object type (tables vs views)
+- See row counts, sizes, and last modified dates at a glance
 
-### 📈 **Visualizations**
-- **Monthly Revenue Chart**: Interactive line chart showing revenue trends
-- **Category Performance**: Bar chart comparing sales across product categories  
-- **Top Products**: Dynamic list of best-selling products by category
-- **KPI Cards**: Color-coded metrics with trend indicators
+### 📊 **Rich Metadata**
+- **Comprehensive Table Info**: Row counts, storage size, creation/modification dates
+- **Column Schema Details**: Data types, nullability, and column comments
+- **System Metadata**: Original Snowflake comments and descriptions
+- **Usage Stats**: View ratings, comment counts, and popularity
 
-### 🎚️ **Interactive Controls**
-- **Time Period Filter**: Last 7, 30, 90 days, or all time
-- **Category Filter**: All categories or specific product categories
-- **Real-time Updates**: Instant chart and metric updates on filter changes
+### 👥 **Collaborative Features**
+- **5-Star Ratings**: Rate data quality and usefulness
+- **Comment Threads**: Discuss tables, share insights, and ask questions
+- **Wiki Descriptions**: Create and edit collaborative documentation
+- **User Attribution**: See who contributed ratings, comments, and descriptions
+
+### 🔐 **Data Governance**
+- **Access Request Workflow**: Request access with justification
+- **Approval Tracking**: Monitor request status (pending, approved, denied)
+- **Audit Trail**: Track requesters, approvers, and decision timestamps
+- **Role-Based Access**: Read-only catalog role with governed access patterns
 
 ## 🏗️ Architecture
 
@@ -71,60 +80,86 @@ sales-analytics-dashboard/
 
 ## 🗄️ Database Schema
 
-The template creates a complete e-commerce database with realistic sample data:
+The catalog creates a comprehensive metadata infrastructure:
 
-### **Tables Created**
+### **Catalog Tables**
 ```sql
--- Customer data (220 customers)
-CUSTOMERS (id, name, email, registration_date, total_orders, total_spent)
+-- Cached metadata from INFORMATION_SCHEMA
+CATALOG_METADATA (database_name, schema_name, table_name, table_type, 
+                  row_count, bytes, created, last_altered, comment)
 
--- Product catalog (220 products across 5 categories)  
-PRODUCTS (id, name, category, price, cost, stock_quantity, supplier)
+-- Column-level schema information
+CATALOG_COLUMNS (full_table_name, column_name, data_type, 
+                 is_nullable, comment, ordinal_position)
 
--- Order transactions (500+ orders with realistic patterns)
-ORDERS (id, customer_id, product_id, quantity, unit_price, total_amount, order_date, status)
+-- User ratings (1-5 stars)
+USER_RATINGS (table_full_name, user_name, rating, created_at)
+
+-- Discussion threads
+USER_COMMENTS (comment_id, table_full_name, user_name, 
+               comment_text, created_at, updated_at)
+
+-- Wiki-style documentation
+TABLE_DESCRIPTIONS (table_full_name, user_description, 
+                    last_updated_by, updated_at)
+
+-- Access request tracking
+ACCESS_REQUESTS (request_id, table_full_name, requester, justification,
+                 status, approver, decision_date, requested_at)
 ```
 
-### **Sample Data Highlights**
-- **$67,971.86** total revenue across all orders
-- **5 product categories**: Electronics, Clothing, Home & Garden, Books, Sports
-- **Realistic pricing**: $5.99 to $899.99 product range  
-- **Time-series data**: Orders spanning multiple months for trend analysis
-- **Customer behavior**: Repeat customers with varied order patterns
+### **Key Features**
+- **Automatic Metadata Scanning**: Stored procedure refreshes from ACCOUNT_USAGE views
+- **Enriched View**: Combines metadata with ratings, descriptions, and comments
+- **Comprehensive Coverage**: Scans all accessible databases (excluding SNOWFLAKE system DB)
+- **Incremental Updates**: Refresh catalog without losing user-generated content
 
 ## 🚀 API Endpoints
 
-The Express server provides 8 comprehensive API endpoints:
+The Express server provides comprehensive REST API endpoints:
 
-### **📊 Core Analytics**
+### **📊 Metadata Discovery**
 - `GET /api/health` - Service health check
-- `GET /api/data?period=30&category=all` - Main dashboard metrics
-- `GET /api/monthly-revenue?period=90` - Revenue trends by month
+- `GET /api/catalog?database=X&schema=Y&search=customer` - Browse catalog with filters
+- `GET /api/catalog/:database/:schema/:table` - Detailed table metadata
+- `GET /api/columns/:database/:schema/:table` - Column schema details
+- `GET /api/databases` - List all accessible databases
+- `GET /api/schemas?database=X` - List schemas in database
+- `GET /api/search?q=query` - Full-text search across catalog
 
-### **🛍️ Product Analytics**  
-- `GET /api/categories` - Available product categories
-- `GET /api/category-sales?period=7&category=Electronics` - Sales by category
-- `GET /api/top-products-by-category?category=all&period=30` - Best sellers
+### **👥 User-Generated Content**
+- `POST /api/ratings` - Submit table rating (1-5 stars)
+- `GET /api/ratings/:table` - Get ratings for table
+- `POST /api/comments` - Add comment to table
+- `GET /api/comments/:table` - Get comments for table
+- `PUT /api/description/:table` - Update wiki description
+- `GET /api/description/:table` - Get wiki description
 
-### **🔍 Detailed Views**
-- `GET /api/customer-analytics?period=all` - Customer insights  
-- `GET /api/product-performance?category=Clothing` - Product metrics
+### **🔐 Access Requests**
+- `POST /api/access-requests` - Submit access request
+- `GET /api/access-requests` - Get user's requests
+- `GET /api/access-requests/pending` - Get pending approvals (admin)
+- `PUT /api/access-requests/:id/approve` - Approve request
+- `PUT /api/access-requests/:id/deny` - Deny request
+
+### **🔧 Maintenance**
+- `POST /api/refresh-catalog` - Trigger metadata refresh
 
 ### **Example API Response**
 ```json
 {
   "success": true,
-  "data": {
-    "totalRevenue": 67971.86,
-    "totalOrders": 504,
-    "totalCustomers": 220,
-    "avgOrderValue": 134.87,
-    "growth": {
-      "revenue": 12.5,
-      "orders": 8.3,
-      "customers": 15.2
-    }
-  }
+  "data": [{
+    "DATABASE_NAME": "PROD_DB",
+    "SCHEMA_NAME": "SALES",
+    "TABLE_NAME": "CUSTOMERS",
+    "TABLE_TYPE": "BASE TABLE",
+    "ROW_COUNT": 1500000,
+    "SIZE_GB": 2.5,
+    "AVG_RATING": 4.5,
+    "COMMENT_COUNT": 8
+  }],
+  "count": 1
 }
 ```
 

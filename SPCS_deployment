@@ -1,0 +1,681 @@
+# Data Catalog - Snowflake SPCS Deployment Plan
+
+## Overview
+
+This plan outlines the deployment of the Data Catalog application using **Snowflake Snowpark Container Services (SPCS)**, which provides a containerized runtime environment within Snowflake. This approach offers greater flexibility, better resource management, and the ability to use custom Python packages and dependencies.
+
+## Functional Requirements (Transferable from SiS)
+
+### Core Features
+1. **Semantic Search & Discovery**
+   - Natural language search across catalog
+   - Cortex Search integration for intelligent results
+   - Filter by database, schema, tags, and attributes
+
+2. **Native Object Tagging**
+   - Apply/remove Snowflake tags from UI
+   - Tag-based governance and classification
+   - Visual tag badges and filtering
+
+3. **Access Request Workflow**
+   - Submit access requests with justification
+   - Approval/denial workflow
+   - Status tracking and notifications
+
+4. **User-Generated Content**
+   - Wiki-style table descriptions
+   - 5-star rating system
+   - Comments and feedback
+
+5. **Rich Metadata Display**
+   - Table statistics and lineage
+   - Column schemas
+   - Usage analytics and popularity metrics
+
+6. **Role-Based Access Control**
+   - Snowflake RBAC integration
+   - Permission-aware UI
+   - Data steward vs. analyst views
+
+---
+
+## Architecture: SPCS vs. Streamlit in Snowflake
+
+### Why SPCS?
+
+| Feature | Streamlit in Snowflake (SiS) | Snowpark Container Services (SPCS) |
+|---------|------------------------------|-------------------------------------|
+| **Deployment** | Managed service, simple | Container-based, full control |
+| **Dependencies** | Limited to pre-installed packages | Any Python package, custom libraries |
+| **Resources** | Shared compute pool | Dedicated compute pool with GPU support |
+| **Networking** | Internal only | External APIs, webhooks, integrations |
+| **Customization** | Limited runtime control | Full container customization |
+| **Scalability** | Auto-scaling (limited) | Explicit horizontal/vertical scaling |
+| **Cost Model** | Credit-based compute | Compute pool credits + storage |
+
+### When to Use SPCS
+- Need custom Python packages not available in SiS
+- Require external API integrations (Slack, email, Jira)
+- Want to integrate with advanced LLMs or AI services
+- Need background workers or schedulers
+- Require WebSocket or SSE for real-time updates
+- Want to deploy microservices architecture
+
+---
+
+## SPCS Architecture Design
+
+```mermaid
+graph TB
+    subgraph "Snowflake Account"
+        subgraph "Compute Pool"
+            ContainerService[SPCS Container Service]
+            App[Streamlit App Container]
+            Worker[Background Worker Container]
+            API[FastAPI Backend Container]
+        end
+        
+        subgraph "Storage"
+            Stage[Image Stage]
+            Data[Application Data Tables]
+            Cortex[Cortex Search Service]
+        end
+        
+        subgraph "Governance"
+            Tags[Native Tags]
+            Policies[Masking Policies]
+            RBAC[Role-Based Access]
+        end
+    end
+    
+    User[End Users] -->|HTTPS| ContainerService
+    ContainerService --> App
+    App --> API
+    API --> Data
+    API --> Cortex
+    API --> Tags
+    Worker --> Data
+    Worker --> Policies
+    
+    ExternalAPI[External APIs<br/>Slack, Email, Jira] -.->|External Access| API
+```
+
+### Container Architecture
+
+**3-Tier Microservices:**
+
+1. **Frontend Container** (Streamlit)
+   - User interface
+   - Session management
+   - Real-time updates
+
+2. **Backend API Container** (FastAPI)
+   - REST API endpoints
+   - Business logic
+   - Snowflake connection pooling
+   - Authentication/authorization
+
+3. **Worker Container** (Optional)
+   - Background jobs
+   - Scheduled tasks (cache refresh, notifications)
+   - Email/Slack integrations
+
+---
+
+## Implementation Plan
+
+### Phase 1: Container Setup
+
+#### 1.1 Create Docker Images
+
+**Directory Structure:**
+```
+data_catalog_spcs/
+├── frontend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── app.py
+│   └── pages/
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── api/
+│   │   ├── routes/
+│   │   ├── models/
+│   │   └── services/
+│   └── config.py
+├── worker/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── tasks.py
+├── docker-compose.yml
+└── spcs_spec.yaml
+```
+
+**Frontend Dockerfile:**
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+```
+
+**Backend Dockerfile:**
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+#### 1.2 Build and Push Images
+
+```bash
+# Build images
+docker build -t data_catalog_frontend:latest ./frontend
+docker build -t data_catalog_backend:latest ./backend
+docker build -t data_catalog_worker:latest ./worker
+
+# Tag for Snowflake registry
+docker tag data_catalog_frontend:latest <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/frontend:latest
+docker tag data_catalog_backend:latest <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/backend:latest
+docker tag data_catalog_worker:latest <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/worker:latest
+
+# Push to Snowflake
+docker push <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/frontend:latest
+docker push <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/backend:latest
+docker push <org>.registry.snowflakecomputing.com/<db>/<schema>/catalog_repo/worker:latest
+```
+
+### Phase 2: Snowflake Infrastructure
+
+#### 2.1 Create Compute Pool
+
+```sql
+CREATE COMPUTE POOL catalog_compute_pool
+  MIN_NODES = 1
+  MAX_NODES = 3
+  INSTANCE_FAMILY = CPU_X64_S
+  AUTO_RESUME = TRUE
+  AUTO_SUSPEND_SECS = 600
+  COMMENT = 'Compute pool for Data Catalog SPCS';
+```
+
+#### 2.2 Create Image Repository
+
+```sql
+CREATE IMAGE REPOSITORY catalog_repo;
+
+-- Show repository URL
+SHOW IMAGE REPOSITORIES LIKE 'catalog_repo';
+```
+
+#### 2.3 Create Service Specification
+
+**spcs_spec.yaml:**
+```yaml
+spec:
+  containers:
+    - name: frontend
+      image: /catalog_db/catalog_schema/catalog_repo/frontend:latest
+      env:
+        BACKEND_URL: http://localhost:8000
+      resources:
+        requests:
+          cpu: 1
+          memory: 2Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
+    
+    - name: backend
+      image: /catalog_db/catalog_schema/catalog_repo/backend:latest
+      env:
+        SNOWFLAKE_ACCOUNT: <account>
+        SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+        SNOWFLAKE_DATABASE: CATALOG_DB
+        SNOWFLAKE_SCHEMA: PUBLIC
+      resources:
+        requests:
+          cpu: 1
+          memory: 2Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
+    
+    - name: worker
+      image: /catalog_db/catalog_schema/catalog_repo/worker:latest
+      env:
+        SNOWFLAKE_ACCOUNT: <account>
+        SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+      resources:
+        requests:
+          cpu: 0.5
+          memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi
+
+  endpoints:
+    - name: frontend
+      port: 8501
+      public: true
+    - name: backend
+      port: 8000
+      public: false
+```
+
+#### 2.4 Create and Start Service
+
+```sql
+CREATE SERVICE data_catalog_service
+  IN COMPUTE POOL catalog_compute_pool
+  FROM @catalog_stage
+  SPECIFICATION_FILE = 'spcs_spec.yaml'
+  MIN_INSTANCES = 1
+  MAX_INSTANCES = 3
+  AUTO_RESUME = TRUE
+  COMMENT = 'Data Catalog SPCS Service';
+
+-- Check service status
+CALL SYSTEM$GET_SERVICE_STATUS('data_catalog_service');
+
+-- Get service logs
+CALL SYSTEM$GET_SERVICE_LOGS('data_catalog_service', 0, 'frontend');
+CALL SYSTEM$GET_SERVICE_LOGS('data_catalog_service', 0, 'backend');
+
+-- Get endpoint URL
+SHOW ENDPOINTS IN SERVICE data_catalog_service;
+```
+
+### Phase 3: Application Development
+
+#### 3.1 Backend API (FastAPI)
+
+**main.py:**
+```python
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from snowflake.snowpark import Session
+import os
+
+app = FastAPI(title="Data Catalog API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def get_snowflake_session():
+    connection_params = {
+        "account": os.getenv("SNOWFLAKE_ACCOUNT"),
+        "user": os.getenv("SNOWFLAKE_USER"),
+        "password": os.getenv("SNOWFLAKE_PASSWORD"),
+        "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
+        "database": os.getenv("SNOWFLAKE_DATABASE"),
+        "schema": os.getenv("SNOWFLAKE_SCHEMA"),
+    }
+    return Session.builder.configs(connection_params).create()
+
+@app.get("/api/catalog")
+async def get_catalog(
+    database: str = None,
+    schema: str = None,
+    search: str = None
+):
+    """Get catalog tables with optional filters"""
+    session = get_snowflake_session()
+    
+    query = "SELECT * FROM CATALOG_ENRICHED_VIEW WHERE 1=1"
+    if database:
+        query += f" AND database_name = '{database}'"
+    if schema:
+        query += f" AND schema_name = '{schema}'"
+    if search:
+        query += f" AND (table_name ILIKE '%{search}%' OR system_description ILIKE '%{search}%')"
+    
+    df = session.sql(query).to_pandas()
+    return df.to_dict('records')
+
+@app.post("/api/tags/apply")
+async def apply_tag(
+    database: str,
+    schema: str,
+    table: str,
+    tag_name: str,
+    tag_value: str
+):
+    """Apply a tag to a table"""
+    session = get_snowflake_session()
+    
+    query = f"""
+    ALTER TABLE {database}.{schema}.{table}
+    SET TAG {tag_name} = '{tag_value}'
+    """
+    
+    try:
+        session.sql(query).collect()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/requests/submit")
+async def submit_request(
+    table_full_name: str,
+    justification: str,
+    user: str
+):
+    """Submit access request"""
+    session = get_snowflake_session()
+    
+    # Insert into requests table
+    # Trigger notification workflow
+    
+    return {"status": "submitted", "request_id": "..."}
+
+# More endpoints...
+```
+
+#### 3.2 Frontend (Streamlit)
+
+**app.py:**
+```python
+import streamlit as st
+import requests
+import pandas as pd
+
+# Configuration
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+
+st.set_page_config(page_title="Data Catalog", layout="wide")
+
+st.title("📊 Data Catalog")
+
+# Fetch catalog data from backend API
+@st.cache_data(ttl=300)
+def get_catalog_data(database=None, schema=None, search=None):
+    params = {}
+    if database:
+        params['database'] = database
+    if schema:
+        params['schema'] = schema
+    if search:
+        params['search'] = search
+    
+    response = requests.get(f"{BACKEND_URL}/api/catalog", params=params)
+    return pd.DataFrame(response.json())
+
+# Search bar
+search = st.text_input("🔍 Search catalog", placeholder="Search tables...")
+
+# Load data
+df = get_catalog_data(search=search)
+
+# Display cards
+for _, row in df.iterrows():
+    with st.container():
+        st.markdown(f"**{row['table_name']}**")
+        st.caption(f"{row['database_name']}.{row['schema_name']}")
+        # ... rest of card display
+```
+
+#### 3.3 Worker (Background Tasks)
+
+**tasks.py:**
+```python
+import schedule
+import time
+from snowflake.snowpark import Session
+import requests
+
+def refresh_cache():
+    """Refresh catalog cache"""
+    # Connect to Snowflake
+    # Run refresh query
+    # Update cache tables
+    print("Cache refreshed")
+
+def send_pending_notifications():
+    """Send notifications for pending requests"""
+    # Query pending requests
+    # Send Slack/email notifications
+    print("Notifications sent")
+
+# Schedule tasks
+schedule.every(1).hours.do(refresh_cache)
+schedule.every(30).minutes.do(send_pending_notifications)
+
+if __name__ == "__main__":
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+```
+
+### Phase 4: External Integrations
+
+#### 4.1 External Access Integration
+
+```sql
+-- Create network rule for external APIs
+CREATE NETWORK RULE slack_network_rule
+  MODE = EGRESS
+  TYPE = HOST_PORT
+  VALUE_LIST = ('hooks.slack.com:443');
+
+-- Create external access integration
+CREATE EXTERNAL ACCESS INTEGRATION slack_integration
+  ALLOWED_NETWORK_RULES = (slack_network_rule)
+  ENABLED = TRUE;
+
+-- Grant to service
+GRANT USAGE ON INTEGRATION slack_integration TO SERVICE data_catalog_service;
+```
+
+#### 4.2 Slack Notifications
+
+```python
+# In backend API
+import requests
+
+def send_slack_notification(webhook_url, message):
+    payload = {
+        "text": message,
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*New Access Request*\n{message}"
+                }
+            }
+        ]
+    }
+    requests.post(webhook_url, json=payload)
+```
+
+### Phase 5: Monitoring & Operations
+
+#### 5.1 Service Monitoring
+
+```sql
+-- Check service status
+SELECT SYSTEM$GET_SERVICE_STATUS('data_catalog_service');
+
+-- View logs
+CALL SYSTEM$GET_SERVICE_LOGS('data_catalog_service', 0, 'frontend', 100);
+
+-- Monitor resource usage
+SELECT * FROM TABLE(
+  INFORMATION_SCHEMA.SERVICE_USAGE_HISTORY(
+    SERVICE_NAME => 'data_catalog_service',
+    START_TIME => DATEADD('hour', -1, CURRENT_TIMESTAMP())
+  )
+);
+```
+
+#### 5.2 Scaling Operations
+
+```sql
+-- Scale service
+ALTER SERVICE data_catalog_service
+  SET MIN_INSTANCES = 2
+      MAX_INSTANCES = 5;
+
+-- Suspend service
+ALTER SERVICE data_catalog_service SUSPEND;
+
+-- Resume service
+ALTER SERVICE data_catalog_service RESUME;
+```
+
+---
+
+## Migration Path: SiS → SPCS
+
+### Step 1: Extract Business Logic
+- Separate UI components from data access
+- Create API layer for Snowflake operations
+- Modularize reusable functions
+
+### Step 2: Containerize
+- Package frontend as Streamlit container
+- Package backend as FastAPI container
+- Create worker container for background tasks
+
+### Step 3: Deploy Infrastructure
+- Create compute pool
+- Set up image repository
+- Deploy service with spec file
+
+### Step 4: Test & Validate
+- Verify all features work in SPCS
+- Test external integrations
+- Load test with concurrent users
+
+### Step 5: Cutover
+- Update DNS/routing if needed
+- Migrate users to new endpoint
+- Decommission SiS application
+
+---
+
+## Cost Comparison
+
+| Component | SiS Cost | SPCS Cost |
+|-----------|----------|-----------|
+| **Compute** | Serverless credits | Compute pool credits (dedicated) |
+| **Storage** | Included | Stage storage for images |
+| **Data Transfer** | None (internal) | Egress for external APIs |
+| **Management** | Minimal | Container orchestration overhead |
+
+**SPCS is more cost-effective when:**
+- You need dedicated resources
+- Multiple services share compute pool
+- External integrations reduce Snowflake query load
+
+---
+
+## Security Considerations
+
+1. **Network Isolation**
+   - Services run in isolated compute pools
+   - Use network rules to restrict egress
+   - Internal services not publicly accessible
+
+2. **Authentication**
+   - OAuth integration for user auth
+   - Service accounts for container-to-Snowflake
+   - API key management for external services
+
+3. **Secrets Management**
+   - Use Snowflake secrets for API keys
+   - Environment variables for config
+   - Never hardcode credentials
+
+4. **RBAC Integration**
+   - Service inherits Snowflake roles
+   - Fine-grained permissions per endpoint
+   - Audit logging for all operations
+
+---
+
+## Success Metrics
+
+1. **Performance**
+   - Page load time < 2s
+   - API response time < 500ms
+   - Concurrent users supported: 100+
+
+2. **Reliability**
+   - Uptime: 99.9%
+   - Auto-scaling under load
+   - Graceful error handling
+
+3. **Adoption**
+   - Daily active users
+   - Tables tagged per week
+   - Access requests processed
+
+4. **Cost Efficiency**
+   - Cost per active user
+   - Compute pool utilization
+   - Storage optimization
+
+---
+
+## Next Steps
+
+1. **Prototype Phase** (Week 1-2)
+   - Set up local development environment
+   - Create Docker containers
+   - Build basic FastAPI backend
+
+2. **Infrastructure Phase** (Week 3)
+   - Create Snowflake compute pool
+   - Set up image repository
+   - Deploy initial service
+
+3. **Feature Development** (Week 4-6)
+   - Port existing features to SPCS
+   - Add external integrations
+   - Implement background workers
+
+4. **Testing & Launch** (Week 7-8)
+   - Performance testing
+   - Security audit
+   - User acceptance testing
+   - Production deployment
+
+---
+
+## Resources & References
+
+- [Snowpark Container Services Documentation](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview)
+- [SPCS Tutorial](https://quickstarts.snowflake.com/guide/intro_to_snowpark_container_services/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Streamlit Docker Deployment](https://docs.streamlit.io/knowledge-base/tutorials/deploy/docker)
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** January 2026  
+**Author:** Data Platform Team

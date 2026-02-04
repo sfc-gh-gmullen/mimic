@@ -141,3 +141,31 @@ CMD ["node", "server.js"]
 - The script should build docker image and push it to Snowflake
 - Then it should start the service and wait for endpoints to be available
 - Always use `-c default` flag in all snowsql commands to specify connection
+
+### Service Updates - DROP and CREATE (CRITICAL)
+**ALWAYS use DROP SERVICE + CREATE SERVICE for updates - NEVER use SUSPEND/RESUME**
+
+Why DROP/CREATE is required:
+- SUSPEND/RESUME does NOT pull the latest Docker image
+- The service continues using the cached image from when it was first created
+- DROP/CREATE forces Snowflake to pull the fresh image from the registry
+- This ensures all code changes are actually deployed
+
+Correct update process:
+```bash
+# 1. Build and push new image
+docker build --platform linux/amd64 -t app:latest .
+docker tag app:latest REGISTRY/app:latest
+docker push REGISTRY/app:latest
+
+# 2. DROP the existing service
+snow sql -c CONNECTION -q "DROP SERVICE IF EXISTS DB.SCHEMA.SERVICE_NAME;"
+
+# 3. CREATE service with the same specification
+snow sql -c CONNECTION -q "CREATE SERVICE DB.SCHEMA.SERVICE_NAME ..."
+
+# 4. Wait for service to be READY
+# 5. Get new endpoint URL (it will change with each CREATE)
+```
+
+⚠️ **NEVER use ALTER SERVICE SUSPEND/RESUME for deploying updates** - it does not refresh the image!
