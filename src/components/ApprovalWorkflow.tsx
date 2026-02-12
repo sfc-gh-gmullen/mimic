@@ -25,7 +25,11 @@ interface Contact {
   INHERITED: boolean;
 }
 
-const ApprovalWorkflow: React.FC = () => {
+interface ApprovalWorkflowProps {
+  canApprove: boolean;
+}
+
+const ApprovalWorkflow: React.FC<ApprovalWorkflowProps> = ({ canApprove }) => {
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState<AccessRequest | null>(null);
@@ -341,21 +345,166 @@ const ApprovalWorkflow: React.FC = () => {
     }
   };
 
-  const getStatusBadgeStyle = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return { backgroundColor: '#FFF3CD', color: '#856404', borderColor: '#FFC107' };
-      case 'pending_info':
-        return { backgroundColor: '#D1ECF1', color: '#0C5460', borderColor: '#17A2B8' };
-      default:
-        return { backgroundColor: '#F8F9FA', color: '#6C757D', borderColor: '#DEE2E6' };
-    }
+  const getStatusBadge = (status: string) => {
+    const statusStyles: { [key: string]: { bg: string; color: string; label: string; icon: string; border: string } } = {
+      'pending': { 
+        bg: '#FFF4E6', 
+        color: '#E67E22', 
+        label: 'Pending Review', 
+        icon: '⏳',
+        border: '#F39C12'
+      },
+      'pending_info': { 
+        bg: '#FFF3E0', 
+        color: '#F57C00', 
+        label: 'Info Requested', 
+        icon: '📝',
+        border: '#FF9800'
+      },
+      'approved': { 
+        bg: '#E8F5E9', 
+        color: '#2E7D32', 
+        label: 'Approved', 
+        icon: '✅',
+        border: '#4CAF50'
+      },
+      'denied': { 
+        bg: '#FFEBEE', 
+        color: '#C62828', 
+        label: 'Denied', 
+        icon: '❌',
+        border: '#F44336'
+      }
+    };
+    const style = statusStyles[status] || { 
+      bg: '#F5F5F5', 
+      color: '#616161', 
+      label: status, 
+      icon: '•',
+      border: '#9E9E9E'
+    };
+    return (
+      <span style={{
+        padding: '6px 16px',
+        backgroundColor: style.bg,
+        color: style.color,
+        border: `2px solid ${style.border}`,
+        borderRadius: '20px',
+        fontSize: '0.85em',
+        fontWeight: '700',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px'
+      }}>
+        <span style={{ fontSize: '1.1em' }}>{style.icon}</span>
+        {style.label}
+      </span>
+    );
+  };
+
+  const getWorkflowTimeline = (request: AccessRequest) => {
+    const steps = [
+      { 
+        label: 'Submitted', 
+        completed: true, 
+        date: new Date(request.REQUESTED_AT).toLocaleDateString(),
+        icon: '📤'
+      },
+      { 
+        label: 'Review', 
+        completed: request.STATUS !== 'pending',
+        active: request.STATUS === 'pending' || request.STATUS === 'pending_info',
+        date: request.STATUS === 'pending_info' ? 'In Progress' : request.ASSIGNED_TO ? `Assigned to ${request.ASSIGNED_TO}` : '',
+        icon: '👀'
+      },
+      { 
+        label: request.STATUS === 'denied' ? 'Denied' : 'Approved', 
+        completed: request.STATUS === 'approved' || request.STATUS === 'denied',
+        date: request.DECISION_DATE ? new Date(request.DECISION_DATE).toLocaleDateString() : '',
+        icon: request.STATUS === 'denied' ? '❌' : '✅',
+        isDenied: request.STATUS === 'denied'
+      }
+    ];
+
+    return (
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '8px',
+        padding: '16px',
+        backgroundColor: '#F8F9FA',
+        borderRadius: '12px',
+        marginTop: '12px'
+      }}>
+        {steps.map((step, idx) => (
+          <React.Fragment key={idx}>
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              flex: 1
+            }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: step.completed 
+                  ? (step.isDenied ? '#F44336' : '#4CAF50')
+                  : step.active 
+                    ? '#FF9800' 
+                    : '#E0E0E0',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.2em',
+                fontWeight: '700',
+                boxShadow: step.completed || step.active ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
+                transition: 'all 0.3s ease'
+              }}>
+                {step.icon}
+              </div>
+              <div style={{ 
+                marginTop: '8px', 
+                fontSize: '0.75em', 
+                fontWeight: '600',
+                color: step.completed || step.active ? '#212529' : '#9E9E9E',
+                textAlign: 'center'
+              }}>
+                {step.label}
+              </div>
+              {step.date && (
+                <div style={{ 
+                  fontSize: '0.7em', 
+                  color: '#6c757d',
+                  marginTop: '2px',
+                  textAlign: 'center'
+                }}>
+                  {step.date}
+                </div>
+              )}
+            </div>
+            {idx < steps.length - 1 && (
+              <div style={{
+                flex: 0.5,
+                height: '3px',
+                backgroundColor: step.completed ? (steps[idx + 1].isDenied ? '#F44336' : '#4CAF50') : '#E0E0E0',
+                borderRadius: '2px',
+                marginBottom: '40px'
+              }} />
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+    );
   };
 
   if (loading && (requests || []).length === 0) {
     return (
       <div style={{ 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
         borderRadius: '20px', 
         padding: '32px', 
         boxShadow: '0 10px 40px rgba(0,0,0,0.15)'
@@ -375,7 +524,7 @@ const ApprovalWorkflow: React.FC = () => {
 
   return (
     <div style={{ 
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
       borderRadius: '20px', 
       padding: '32px', 
       boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
@@ -417,7 +566,7 @@ const ApprovalWorkflow: React.FC = () => {
                 <div style={{ flex: 1, marginRight: '16px' }}>
                   <h3 style={{ 
                     margin: '0 0 12px 0', 
-                    color: '#667eea',
+                    color: '#29B5E8',
                     fontSize: '1.1em',
                     fontWeight: '600'
                   }}>
@@ -432,20 +581,20 @@ const ApprovalWorkflow: React.FC = () => {
                     marginBottom: '12px'
                   }}>
                     <div>
-                      <span style={{ fontWeight: '600', color: '#667eea' }}>👤 </span>
+                      <span style={{ fontWeight: '600', color: '#29B5E8' }}>👤 </span>
                       {truncateText(request.REQUESTER, 30)}
                     </div>
                     <div>
-                      <span style={{ fontWeight: '600', color: '#667eea' }}>📅 </span>
+                      <span style={{ fontWeight: '600', color: '#29B5E8' }}>📅 </span>
                       {formatDate(request.REQUESTED_AT)}
                     </div>
                     <div>
-                      <span style={{ fontWeight: '600', color: '#667eea' }}>🔑 </span>
+                      <span style={{ fontWeight: '600', color: '#29B5E8' }}>🔑 </span>
                       {request.ACCESS_TYPE === 'ROLE' ? `Role: ${truncateText(request.GRANT_TO_NAME, 20)}` : `User: ${truncateText(request.GRANT_TO_NAME, 20)}`}
                     </div>
                     {request.ACCESS_START_DATE && request.ACCESS_END_DATE && (
                       <div>
-                        <span style={{ fontWeight: '600', color: '#667eea' }}>⏰ </span>
+                        <span style={{ fontWeight: '600', color: '#29B5E8' }}>⏰ </span>
                         {formatDate(request.ACCESS_START_DATE)} - {formatDate(request.ACCESS_END_DATE)}
                       </div>
                     )}
@@ -464,18 +613,7 @@ const ApprovalWorkflow: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <span style={{ 
-                  padding: '6px 16px',
-                  ...getStatusBadgeStyle(request.STATUS),
-                  border: '1px solid',
-                  borderRadius: '12px',
-                  fontSize: '0.8em',
-                  fontWeight: '600',
-                  textTransform: 'uppercase',
-                  whiteSpace: 'nowrap'
-                }}>
-                  {request.STATUS === 'pending_info' ? 'MORE INFO NEEDED' : request.STATUS}
-                </span>
+                {getStatusBadge(request.STATUS)}
               </div>
 
               <div style={{ 
@@ -504,6 +642,9 @@ const ApprovalWorkflow: React.FC = () => {
                   </div>
                 )}
               </div>
+              
+              {/* Workflow Timeline */}
+              {getWorkflowTimeline(request)}
 
               {selectedRequest?.REQUEST_ID === request.REQUEST_ID ? (
                 <div style={{ 
@@ -511,9 +652,9 @@ const ApprovalWorkflow: React.FC = () => {
                   padding: '20px', 
                   backgroundColor: 'white', 
                   borderRadius: '12px', 
-                  border: '2px solid #667eea'
+                  border: '2px solid #29B5E8'
                 }}>
-                  <h4 style={{ margin: '0 0 16px 0', color: '#667eea', fontSize: '1.1em' }}>Review & Decision</h4>
+                  <h4 style={{ margin: '0 0 16px 0', color: '#29B5E8', fontSize: '1.1em' }}>Review & Decision</h4>
                   
                   {/* Contacts Section */}
                   {contacts && contacts.length > 0 && (
@@ -587,38 +728,40 @@ const ApprovalWorkflow: React.FC = () => {
                         transition: 'border-color 0.2s',
                         outline: 'none'
                       }}
-                      onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                      onFocus={(e) => e.target.style.borderColor = '#29B5E8'}
                       onBlur={(e) => e.target.style.borderColor = '#e9ecef'}
                     />
                   </div>
 
                   <div style={{ 
                     display: 'grid', 
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                    gridTemplateColumns: canApprove ? 'repeat(auto-fit, minmax(200px, 1fr))' : '1fr',
                     gap: '12px', 
                     marginTop: '20px' 
                   }}>
-                    <button
-                      onClick={handleApproveWithGrant}
-                      disabled={loading}
-                      style={{ 
-                        padding: '14px 20px',
-                        backgroundColor: '#28a745',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '12px',
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        fontWeight: '600',
-                        fontSize: '0.95em',
-                        opacity: loading ? 0.6 : 1,
-                        transition: 'all 0.2s',
-                        boxShadow: '0 4px 12px rgba(40, 167, 69, 0.3)'
-                      }}
-                      onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
-                      onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                    >
-                      ✓ Approve & Grant
-                    </button>
+                    {canApprove && (
+                      <button
+                        onClick={handleApproveWithGrant}
+                        disabled={loading}
+                        style={{ 
+                          padding: '14px 20px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '12px',
+                          cursor: loading ? 'not-allowed' : 'pointer',
+                          fontWeight: '600',
+                          fontSize: '0.95em',
+                          opacity: loading ? 0.6 : 1,
+                          transition: 'all 0.2s',
+                          boxShadow: '0 4px 12px rgba(40, 167, 69, 0.3)'
+                        }}
+                        onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
+                        onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                      >
+                        ✓ Approve & Grant
+                      </button>
+                    )}
                     <button
                       onClick={handleDeny}
                       disabled={loading}
@@ -755,7 +898,7 @@ const ApprovalWorkflow: React.FC = () => {
                   onClick={() => setSelectedRequest(request)}
                   style={{ 
                     padding: '12px 24px',
-                    backgroundColor: '#667eea',
+                    backgroundColor: '#29B5E8',
                     color: 'white',
                     border: 'none',
                     borderRadius: '12px',

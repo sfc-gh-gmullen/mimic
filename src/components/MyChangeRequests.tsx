@@ -235,7 +235,7 @@ const MyChangeRequests: React.FC = () => {
                         style={{
                           width: '100%',
                           padding: '12px',
-                          border: '2px solid #667eea',
+                          border: '2px solid #29B5E8',
                           borderRadius: '8px',
                           fontSize: '0.95em',
                           minHeight: '100px',
@@ -254,7 +254,7 @@ const MyChangeRequests: React.FC = () => {
                         style={{
                           width: '100%',
                           padding: '12px',
-                          border: '2px solid #667eea',
+                          border: '2px solid #29B5E8',
                           borderRadius: '8px',
                           fontSize: '0.95em',
                           minHeight: '80px',
@@ -351,7 +351,7 @@ const MyChangeRequests: React.FC = () => {
                         onClick={() => handleEditRequest(request)}
                         style={{
                           padding: '10px 24px',
-                          backgroundColor: '#667eea',
+                          backgroundColor: '#29B5E8',
                           color: 'white',
                           border: 'none',
                           borderRadius: '8px',
@@ -384,7 +384,7 @@ const MyChangeRequests: React.FC = () => {
             onClick={() => setModal({ ...modal, isOpen: false })}
             style={{
               padding: '10px 20px',
-              backgroundColor: '#667eea',
+              backgroundColor: '#29B5E8',
               color: 'white',
               border: 'none',
               borderRadius: '8px',

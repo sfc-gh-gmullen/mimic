@@ -14,7 +14,11 @@ interface ChangeRequest {
   REQUESTED_AT: string;
 }
 
-const ContentChangeApproval: React.FC = () => {
+interface ContentChangeApprovalProps {
+  canApprove: boolean;
+}
+
+const ContentChangeApproval: React.FC<ContentChangeApprovalProps> = ({ canApprove }) => {
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRequest, setSelectedRequest] = useState<ChangeRequest | null>(null);
@@ -374,7 +378,7 @@ const ContentChangeApproval: React.FC = () => {
                       border: '1px solid #dee2e6'
                     }}
                   >
-                    <div style={{ fontWeight: '600', color: '#667eea' }}>{enumVal.value_code}</div>
+                    <div style={{ fontWeight: '600', color: '#29B5E8' }}>{enumVal.value_code}</div>
                     <div style={{ fontSize: '0.85em', color: '#6c757d', marginTop: '4px' }}>
                       {enumVal.value_description}
                     </div>
@@ -393,7 +397,7 @@ const ContentChangeApproval: React.FC = () => {
   if (loading && (requests || []).length === 0) {
     return (
       <div style={{ 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
         borderRadius: '20px', 
         padding: '32px', 
         boxShadow: '0 10px 40px rgba(0,0,0,0.15)'
@@ -422,7 +426,7 @@ const ContentChangeApproval: React.FC = () => {
       />
       
       <div style={{ 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
         borderRadius: '20px', 
         padding: '32px', 
         boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
@@ -476,7 +480,7 @@ const ContentChangeApproval: React.FC = () => {
                     </div>
                     <h3 style={{ 
                       margin: '0 0 12px 0', 
-                      color: '#667eea',
+                      color: '#29B5E8',
                       fontSize: '1.1em',
                       fontWeight: '600'
                     }}>
@@ -491,16 +495,16 @@ const ContentChangeApproval: React.FC = () => {
                       marginBottom: '12px'
                     }}>
                       <div>
-                        <span style={{ fontWeight: '600', color: '#667eea' }}>👤 </span>
+                        <span style={{ fontWeight: '600', color: '#29B5E8' }}>👤 </span>
                         {truncateText(request.REQUESTER, 30)}
                       </div>
                       <div>
-                        <span style={{ fontWeight: '600', color: '#667eea' }}>📅 </span>
+                        <span style={{ fontWeight: '600', color: '#29B5E8' }}>📅 </span>
                         {formatDate(request.REQUESTED_AT)}
                       </div>
                       {request.ASSIGNED_TO && (
                         <div>
-                          <span style={{ fontWeight: '600', color: '#667eea' }}>📌 </span>
+                          <span style={{ fontWeight: '600', color: '#29B5E8' }}>📌 </span>
                           Assigned to: {request.ASSIGNED_TO}
                         </div>
                       )}
@@ -537,9 +541,9 @@ const ContentChangeApproval: React.FC = () => {
                     padding: '20px', 
                     backgroundColor: 'white', 
                     borderRadius: '12px', 
-                    border: '2px solid #667eea'
+                    border: '2px solid #29B5E8'
                   }}>
-                    <h4 style={{ margin: '0 0 16px 0', color: '#667eea', fontSize: '1.1em' }}>Review & Decision</h4>
+                    <h4 style={{ margin: '0 0 16px 0', color: '#29B5E8', fontSize: '1.1em' }}>Review & Decision</h4>
                     
                     <textarea
                       placeholder="Add decision comment (optional)..."
@@ -559,27 +563,29 @@ const ContentChangeApproval: React.FC = () => {
                     />
 
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <button
-                        onClick={handleApprove}
-                        disabled={loading}
-                        style={{ 
-                          flex: '1 1 200px',
-                          padding: '12px 24px',
-                          backgroundColor: '#28a745',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '12px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontSize: '1em',
-                          fontWeight: '600',
-                          opacity: loading ? 0.6 : 1,
-                          transition: 'all 0.2s'
-                        }}
-                        onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#218838')}
-                        onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#28a745')}
-                      >
-                        ✓ Approve & Apply
-                      </button>
+                      {canApprove && (
+                        <button
+                          onClick={handleApprove}
+                          disabled={loading}
+                          style={{ 
+                            flex: '1 1 200px',
+                            padding: '12px 24px',
+                            backgroundColor: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '12px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '1em',
+                            fontWeight: '600',
+                            opacity: loading ? 0.6 : 1,
+                            transition: 'all 0.2s'
+                          }}
+                          onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#218838')}
+                          onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#28a745')}
+                        >
+                          ✓ Approve & Apply
+                        </button>
+                      )}
                       <button
                         onClick={handleReturnForInfo}
                         disabled={loading}
@@ -647,7 +653,7 @@ const ContentChangeApproval: React.FC = () => {
                     style={{ 
                       width: '100%',
                       padding: '12px',
-                      backgroundColor: '#667eea',
+                      backgroundColor: '#29B5E8',
                       color: 'white',
                       border: 'none',
                       borderRadius: '12px',
@@ -657,7 +663,7 @@ const ContentChangeApproval: React.FC = () => {
                       transition: 'all 0.2s'
                     }}
                     onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#5568d3'}
-                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#667eea'}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#29B5E8'}
                   >
                     Review Request →
                   </button>

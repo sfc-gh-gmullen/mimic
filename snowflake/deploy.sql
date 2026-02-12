@@ -1,8 +1,8 @@
 -- Data Catalog SPCS deployment script
 -- This script creates the compute pool and service
--- Deploys using SYSADMIN role
+-- Run with: snow sql -f snowflake/deploy.sql -c <connection> --role SYSADMIN
 
--- Create compute pool if it doesn't exist
+-- Create compute pool if it doesn't exist (owned by CATALOG_SERVICE_ROLE)
 CREATE COMPUTE POOL IF NOT EXISTS CATALOG_COMPUTE_POOL
   MIN_NODES = 1
   MAX_NODES = 2
@@ -27,7 +27,7 @@ CREATE SERVICE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE
         env:
           PORT: "3002"
           SNOWFLAKE_WAREHOUSE: "COMPUTE_WH"
-          SNOWFLAKE_ROLE: "SYSADMIN"
+          SNOWFLAKE_ROLE: "CATALOG_SERVICE_ROLE"
           SNOWFLAKE_DATABASE: "CATALOG_DB"
           SNOWFLAKE_SCHEMA: "CATALOG_SCHEMA"
         resources:
@@ -41,8 +41,19 @@ CREATE SERVICE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE
       - name: "catalog-endpoint"
         port: 3002
         public: true
+      # NOTE: Caller's rights requires 'capabilities.securityContext.executeAsCaller: true'
+      # This feature must be enabled at the account level - contact Snowflake support
+    serviceRoles:
+    - name: app
+      endpoints:
+      - catalog-endpoint
   $$
   COMMENT = 'Data Catalog SPCS Service';
+
+-- Grant service access to CATALOG_SERVICE_ROLE
+GRANT USAGE ON SERVICE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE TO ROLE CATALOG_SERVICE_ROLE;
+GRANT SERVICE ROLE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE!APP TO ROLE CATALOG_SERVICE_ROLE;
+GRANT SERVICE ROLE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE!ALL_ENDPOINTS_USAGE TO ROLE CATALOG_SERVICE_ROLE;
 
 -- Check service status
 SELECT SYSTEM$GET_SERVICE_STATUS('CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE') as service_status;

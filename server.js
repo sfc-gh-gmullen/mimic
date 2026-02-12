@@ -15,199 +15,52 @@ app.use(express.json());
 // Serve static files from the React app build directory
 app.use(express.static(path.join(__dirname, 'build')));
 
-function isRunningInSnowflakeContainer() {
-  return fs.existsSync("/snowflake/session/token");
+// Get the service OAuth token from SPCS
+function getServiceToken() {
+  return fs.readFileSync('/snowflake/session/token', 'ascii');
 }
 
-function getEnvConnectionOptions() {
-  // Check if running inside Snowpark Container Services
-  if (isRunningInSnowflakeContainer()) {
-    return {
-      accessUrl: "https://" + (process.env.SNOWFLAKE_HOST || ''),
-      account: process.env.SNOWFLAKE_ACCOUNT || '',
-      authenticator: 'OAUTH',
-      token: fs.readFileSync('/snowflake/session/token', 'ascii'),
-      role: process.env.SNOWFLAKE_ROLE,
-      warehouse: process.env.SNOWFLAKE_WAREHOUSE || 'COMPUTE_WH',
-      database: process.env.SNOWFLAKE_DATABASE,
-      schema: process.env.SNOWFLAKE_SCHEMA,
-      clientSessionKeepAlive: true,
-    };
-  } else {
-    // Running locally - use environment variables for credentials
-    return {
-      account: process.env.SNOWFLAKE_ACCOUNT || '',
-      username: process.env.SNOWFLAKE_USER,
-      password: process.env.SNOWFLAKE_PASSWORD,
-      role: process.env.SNOWFLAKE_ROLE,
-      warehouse: process.env.SNOWFLAKE_WAREHOUSE || 'COMPUTE_WH',
-      database: process.env.SNOWFLAKE_DATABASE,
-      schema: process.env.SNOWFLAKE_SCHEMA,
-      clientSessionKeepAlive: true,
-    };
+// Connect to Snowflake using SPCS OAuth authentication
+// With caller's rights: pass req to execute SQL as the calling user
+async function connectToSnowflake(req = null) {
+  const serviceToken = getServiceToken();
+  const ingressUserToken = req?.headers?.['sf-context-current-user-token'];
+  
+  // Caller's rights: combine service token + user token
+  // This allows queries to run with the caller's permissions
+  const token = ingressUserToken 
+    ? `${serviceToken}.${ingressUserToken}` 
+    : serviceToken;
+  
+  if (ingressUserToken) {
+    console.log('🔐 Using caller\'s rights for user:', req?.headers?.['sf-context-current-user']);
   }
-}
+  
+  const connectionOptions = {
+    account: process.env.SNOWFLAKE_ACCOUNT,
+    host: process.env.SNOWFLAKE_HOST,
+    token: token,
+    authenticator: 'OAUTH',
+    warehouse: process.env.SNOWFLAKE_WAREHOUSE,
+    database: process.env.SNOWFLAKE_DATABASE,
+    schema: process.env.SNOWFLAKE_SCHEMA,
+    clientSessionKeepAlive: true,
+  };
 
-async function connectToSnowflakeFromEnv(connectionName = 'default') {
-  const connection = snowflake.createConnection(getEnvConnectionOptions());
+  const connection = snowflake.createConnection(connectionOptions);
+  
   await new Promise((resolve, reject) => {
     connection.connect((err, conn) => {
       if (err) {
+        console.error('❌ Failed to connect to Snowflake:', err.message);
         reject(err);
       } else {
         resolve(conn);
       }
     });
   });
+  
   return connection;
-}
-
-// Function to read snowsql config (similar to Python version)
-function readSnowsqlConfig(configPath = '~/.snowsql/config') {
-  const expandedPath = configPath.replace('~', require('os').homedir());
-  
-  if (!fs.existsSync(expandedPath)) {
-    throw new Error(`Config file not found at ${expandedPath}`);
-  }
-  
-  const configContent = fs.readFileSync(expandedPath, 'utf8');
-  return parseIniFile(configContent);
-}
-
-// Simple INI file parser
-function parseIniFile(content) {
-  const config = {};
-  let currentSection = null;
-  
-  content.split('\n').forEach(line => {
-    line = line.trim();
-    if (line.startsWith('[') && line.endsWith(']')) {
-      currentSection = line.slice(1, -1);
-      config[currentSection] = {};
-    } else if (line.includes('=') && currentSection) {
-      const [key, value] = line.split('=').map(s => s.trim());
-      config[currentSection][key] = value.replace(/['"]/g, ''); // Remove quotes
-    }
-  });
-  
-  return config;
-}
-
-// Function to load private key (Node.js Snowflake SDK expects PEM string)
-function loadPrivateKey(privateKeyPath) {
-  try {
-    const keyPath = privateKeyPath.replace('~', require('os').homedir());
-    
-    console.log(`Loading private key from: ${keyPath}`);
-    const keyContent = fs.readFileSync(keyPath, 'utf8');
-    
-    // The Node.js Snowflake SDK expects the private key as a PEM string
-    console.log('Successfully loaded private key as PEM string');
-    return keyContent;
-  } catch (error) {
-    console.error('Error loading private key:', error);
-    return null;
-  }
-}
-
-// Connect to Snowflake using default configuration
-async function connectToSnowflakeFromConfig(connectionName = 'default') {
-  try {
-    console.log(`Connecting to Snowflake using ${connectionName}...`);
-    
-    // Read configuration
-    const config = readSnowsqlConfig();
-    
-    // Try to get connection parameters from the specified connection
-    let sectionName = `connections.${connectionName}`;
-    if (!config[sectionName]) {
-      // Fall back to direct section name
-      const availableSections = Object.keys(config).filter(s => !s.startsWith('connections.'));
-      if (availableSections.length > 0) {
-        sectionName = availableSections[0];
-        console.log(`Connection '${connectionName}' not found, using '${sectionName}'`);
-      } else {
-        throw new Error('No valid connection configuration found');
-      }
-    }
-    
-    const section = config[sectionName];
-    console.log('Found config section:', sectionName);
-    
-    // Extract connection parameters
-    const account = section.accountname || section.account;
-    const username = section.username || section.user;
-    const privateKeyPath = section.private_key_path;
-    const password = section.password;
-    const warehouse = section.warehousename || section.warehouse || process.env.SNOWFLAKE_WAREHOUSE || 'COMPUTE_WH';
-    const database = section.databasename || section.database || process.env.SNOWFLAKE_DATABASE;
-    const schema = section.schemaname || section.schema || process.env.SNOWFLAKE_SCHEMA;
-    
-    if (!account || !username) {
-      throw new Error('Missing required connection parameters (account, username)');
-    }
-    
-    if (!privateKeyPath && !password) {
-      throw new Error('Missing authentication method (private_key_path or password)');
-    }
-    
-    console.log(`Account: ${account}`);
-    console.log(`Username: ${username}`);
-    console.log(`Warehouse: ${warehouse}`);
-    
-    // Create connection parameters
-    const connectionParams = {
-      account: account,
-      username: username,
-      warehouse: warehouse
-    };
-    
-    // Add database and schema if available
-    if (database) connectionParams.database = database;
-    if (schema) connectionParams.schema = schema;
-    
-    // Add authentication method
-    if (privateKeyPath) {
-      console.log('Using private key authentication');
-      const privateKey = loadPrivateKey(privateKeyPath);
-      if (!privateKey) {
-        throw new Error('Failed to load private key');
-      }
-      connectionParams.privateKey = privateKey;
-      connectionParams.authenticator = 'SNOWFLAKE_JWT';
-    } else {
-      console.log('Using password authentication');
-      connectionParams.password = password;
-    }
-    
-    // Create and connect
-    const connection = snowflake.createConnection(connectionParams);
-    
-    await new Promise((resolve, reject) => {
-      connection.connect((err, conn) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(conn);
-        }
-      });
-    });
-    
-    console.log('✅ Successfully connected to Snowflake!');
-    return connection;
-    
-  } catch (error) {
-    console.error('❌ Error connecting to Snowflake:', error);
-    throw error;
-  }
-}
-
-async function connectToSnowflake(connectionName = 'default') {
-  if (isRunningInSnowflakeContainer()) {
-    return await connectToSnowflakeFromEnv(connectionName);
-  } else {
-    return await connectToSnowflakeFromConfig(connectionName);
-  }
 }
 
 // Execute query with proper error handling
@@ -228,10 +81,9 @@ async function executeQuery(connection, query) {
 
 // Essential API endpoints
 app.get('/api/health', (req, res) => {
-    const isInContainer = isRunningInSnowflakeContainer();
     res.json({
         status: 'OK',
-        environment: isInContainer ? 'SPCS Container' : 'Local Development',
+        environment: 'SPCS Container',
         port: PORT,
         host: HOST,
         timestamp: new Date().toISOString()
@@ -244,6 +96,21 @@ function sanitizeInput(input) {
     return input.replace(/'/g, "''").substring(0, 1000); // Basic sanitization and length limit
 }
 
+// Helper function to check if current role has a permission
+async function checkPermission(connection, permissionType, req) {
+    const spcsRole = req?.headers?.['sf-context-current-role'] || 'PUBLIC';
+    
+    const query = `
+        SELECT COUNT(*) as HAS_PERMISSION
+        FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
+        WHERE SNOWFLAKE_ROLE = '${sanitizeInput(spcsRole)}'
+        AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
+    `;
+    
+    const rows = await executeQuery(connection, query);
+    return rows[0]?.HAS_PERMISSION > 0;
+}
+
 // ============================================================================
 // USER INFO
 // ============================================================================
@@ -252,7 +119,7 @@ app.get('/api/current-user', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = 'SELECT CURRENT_USER() as USERNAME';
         const rows = await executeQuery(connection, query);
@@ -273,6 +140,604 @@ app.get('/api/current-user', async (req, res) => {
     }
 });
 
+// Get current user and role context from SPCS headers
+app.get('/api/current-user-context', async (req, res) => {
+    const spcsUser = req.headers['sf-context-current-user'];
+    const spcsRole = req.headers['sf-context-current-account-role'] || req.headers['sf-context-current-role'];
+    
+    res.json({ 
+        success: true,
+        username: spcsUser || 'UNKNOWN_USER',
+        role: spcsRole || 'PUBLIC'
+    });
+});
+
+// Get available Snowflake roles for dropdown
+app.get('/api/snowflake-roles', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const rows = await executeQuery(connection, 'SHOW ROLES');
+        const roles = rows.map(r => ({
+            name: r.name,
+            owner: r.owner,
+            assignedToUsers: r.assigned_to_users
+        }));
+        
+        res.json({ 
+            success: true,
+            data: roles
+        });
+        
+    } catch (error) {
+        console.error('❌ Get Snowflake roles error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch Snowflake roles'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Get roles that the current user can assume
+app.get('/api/my-roles', async (req, res) => {
+    const spcsUser = req.headers['sf-context-current-user'];
+    const spcsRole = req.headers['sf-context-current-role'] || req.headers['sf-context-current-account-role'];
+    
+    if (!spcsUser) {
+        return res.status(401).json({ 
+            success: false, 
+            error: 'User not authenticated' 
+        });
+    }
+    
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const username = spcsUser;
+        const currentRole = spcsRole || 'PUBLIC';
+        
+        // Get roles granted to the user
+        let roles = [];
+        try {
+            const rows = await executeQuery(connection, `SHOW GRANTS TO USER "${username}"`);
+            roles = rows
+                .filter(r => r.privilege === 'USAGE' && r.granted_on === 'ROLE')
+                .map(r => r.name);
+        } catch (e) {
+            console.log('Could not fetch user roles:', e.message);
+            if (currentRole) roles = [currentRole];
+        }
+        
+        // Ensure current role is in the list
+        if (currentRole && !roles.includes(currentRole)) {
+            roles.push(currentRole);
+        }
+        
+        // Get user's default role from SHOW USERS
+        let defaultRole = currentRole;
+        try {
+            const userRows = await executeQuery(connection, `SHOW USERS LIKE '${username}'`);
+            if (userRows && userRows.length > 0) {
+                defaultRole = userRows[0].default_role || currentRole;
+            }
+        } catch (e) {
+            console.log('Could not fetch default role, using current role');
+        }
+        
+        // Ensure default role is in the list
+        if (defaultRole && !roles.includes(defaultRole)) {
+            roles.push(defaultRole);
+        }
+        
+        console.log(`User ${username}: roles=${roles.join(',')}, current=${currentRole}, default=${defaultRole}`);
+        
+        res.json({ 
+            success: true,
+            roles: roles.sort(),
+            currentRole: currentRole,
+            defaultRole: defaultRole
+        });
+        
+    } catch (error) {
+        console.error('❌ Get my roles error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch user roles'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Change the current session role
+// Note: In SPCS, the actual session role is fixed. This endpoint validates 
+// the role is available and returns success so the UI can track the selection.
+app.post('/api/change-role', async (req, res) => {
+    const { role } = req.body;
+    
+    if (!role) {
+        return res.status(400).json({ success: false, error: 'Role is required' });
+    }
+    
+    const spcsUser = req.headers['sf-context-current-user'];
+    
+    if (!spcsUser) {
+        return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Verify the user can use this role
+        let canUseRole = false;
+        try {
+            const rows = await executeQuery(connection, `SHOW GRANTS TO USER "${spcsUser}"`);
+            const userRoles = rows
+                .filter(r => r.privilege === 'USAGE' && r.granted_on === 'ROLE')
+                .map(r => r.name);
+            canUseRole = userRoles.includes(role);
+        } catch (e) {
+            console.log('Could not verify role access:', e.message);
+        }
+        
+        if (!canUseRole) {
+            return res.status(403).json({ 
+                success: false, 
+                error: `User ${spcsUser} cannot use role ${role}` 
+            });
+        }
+        
+        console.log(`Role change: User ${spcsUser} selected role ${role}`);
+        
+        res.json({ 
+            success: true,
+            role: role
+        });
+        
+    } catch (error) {
+        console.error('❌ Change role error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: `Failed to change role: ${error.message}`
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// ============================================================================
+// ROLE PERMISSIONS ENDPOINTS
+// ============================================================================
+
+// Get all role permissions
+app.get('/api/role-permissions', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            SELECT PERMISSION_ID, SNOWFLAKE_ROLE, PERMISSION_TYPE, GRANTED_BY, GRANTED_AT
+            FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
+            ORDER BY PERMISSION_TYPE, SNOWFLAKE_ROLE
+        `;
+        const rows = await executeQuery(connection, query);
+        
+        res.json({ 
+            success: true,
+            data: rows
+        });
+        
+    } catch (error) {
+        console.error('❌ Get role permissions error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch role permissions'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Get role permissions by permission type
+app.get('/api/role-permissions/:permissionType', async (req, res) => {
+    let connection;
+    const { permissionType } = req.params;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            SELECT PERMISSION_ID, SNOWFLAKE_ROLE, PERMISSION_TYPE, GRANTED_BY, GRANTED_AT
+            FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
+            WHERE PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
+            ORDER BY SNOWFLAKE_ROLE
+        `;
+        const rows = await executeQuery(connection, query);
+        
+        res.json({ 
+            success: true,
+            data: rows
+        });
+        
+    } catch (error) {
+        console.error('❌ Get role permissions by type error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch role permissions'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Add a role permission
+app.post('/api/role-permissions', async (req, res) => {
+    let connection;
+    const { snowflakeRole, permissionType } = req.body;
+    
+    if (!snowflakeRole || !permissionType) {
+        return res.status(400).json({
+            success: false,
+            error: 'snowflakeRole and permissionType are required'
+        });
+    }
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            INSERT INTO CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS 
+            (SNOWFLAKE_ROLE, PERMISSION_TYPE, GRANTED_BY)
+            SELECT '${sanitizeInput(snowflakeRole)}', '${sanitizeInput(permissionType)}', CURRENT_USER()
+            WHERE NOT EXISTS (
+                SELECT 1 FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS 
+                WHERE SNOWFLAKE_ROLE = '${sanitizeInput(snowflakeRole)}' 
+                AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
+            )
+        `;
+        await executeQuery(connection, query);
+        
+        res.json({ 
+            success: true,
+            message: `Permission ${permissionType} granted to role ${snowflakeRole}`
+        });
+        
+    } catch (error) {
+        console.error('❌ Add role permission error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to add role permission'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Remove a role permission
+app.delete('/api/role-permissions/:snowflakeRole/:permissionType', async (req, res) => {
+    let connection;
+    const { snowflakeRole, permissionType } = req.params;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            DELETE FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS 
+            WHERE SNOWFLAKE_ROLE = '${sanitizeInput(snowflakeRole)}' 
+            AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
+        `;
+        await executeQuery(connection, query);
+        
+        res.json({ 
+            success: true,
+            message: `Permission ${permissionType} removed from role ${snowflakeRole}`
+        });
+        
+    } catch (error) {
+        console.error('❌ Remove role permission error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to remove role permission'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Grant Snowflake-level service access to a role
+// This grants the actual Snowflake privileges needed to access the SPCS app
+app.post('/api/grant-service-access', async (req, res) => {
+    let connection;
+    const { snowflakeRole } = req.body;
+    
+    if (!snowflakeRole) {
+        return res.status(400).json({
+            success: false,
+            error: 'snowflakeRole is required'
+        });
+    }
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Check if caller has MANAGE_ROLES permission
+        const spcsRole = req.headers['sf-context-current-role'];
+        const hasPermission = await checkPermission(connection, 'MANAGE_ROLES', req);
+        if (!hasPermission) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your role does not have permission to manage role access'
+            });
+        }
+        
+        const roleName = sanitizeInput(snowflakeRole);
+        const grants = [];
+        const errors = [];
+        
+        // Grant USAGE ON SERVICE (service role owns it, so this should work)
+        try {
+            await executeQuery(connection, `GRANT USAGE ON SERVICE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE TO ROLE ${roleName}`);
+            grants.push('USAGE ON SERVICE');
+        } catch (e) {
+            errors.push(`USAGE ON SERVICE: ${e.message}`);
+        }
+        
+        // Grant BIND SERVICE ENDPOINT (service role has GRANT OPTION)
+        try {
+            await executeQuery(connection, `GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE ${roleName}`);
+            grants.push('BIND SERVICE ENDPOINT');
+        } catch (e) {
+            errors.push(`BIND SERVICE ENDPOINT: ${e.message}`);
+        }
+        
+        // Grant USAGE ON COMPUTE POOL
+        try {
+            await executeQuery(connection, `GRANT USAGE ON COMPUTE POOL CATALOG_COMPUTE_POOL TO ROLE ${roleName}`);
+            grants.push('USAGE ON COMPUTE POOL');
+        } catch (e) {
+            errors.push(`USAGE ON COMPUTE POOL: ${e.message}`);
+        }
+        
+        // Grant USAGE ON DATABASE
+        try {
+            await executeQuery(connection, `GRANT USAGE ON DATABASE CATALOG_DB TO ROLE ${roleName}`);
+            grants.push('USAGE ON DATABASE');
+        } catch (e) {
+            errors.push(`USAGE ON DATABASE: ${e.message}`);
+        }
+        
+        // Grant USAGE ON SCHEMA
+        try {
+            await executeQuery(connection, `GRANT USAGE ON SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE ${roleName}`);
+            grants.push('USAGE ON SCHEMA');
+        } catch (e) {
+            errors.push(`USAGE ON SCHEMA: ${e.message}`);
+        }
+        
+        // Grant table access
+        try {
+            await executeQuery(connection, `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE ${roleName}`);
+            grants.push('TABLE ACCESS');
+        } catch (e) {
+            errors.push(`TABLE ACCESS: ${e.message}`);
+        }
+        
+        // Grant USAGE ON WAREHOUSE
+        try {
+            await executeQuery(connection, `GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE ${roleName}`);
+            grants.push('USAGE ON WAREHOUSE');
+        } catch (e) {
+            errors.push(`USAGE ON WAREHOUSE: ${e.message}`);
+        }
+        
+        if (grants.length > 0 && errors.length === 0) {
+            res.json({ 
+                success: true,
+                message: `Service access granted to role ${roleName}`,
+                grants: grants
+            });
+        } else if (grants.length > 0) {
+            res.json({ 
+                success: true,
+                message: `Partial service access granted to role ${roleName}`,
+                grants: grants,
+                warnings: errors
+            });
+        } else {
+            res.status(500).json({ 
+                success: false,
+                error: 'Failed to grant any privileges',
+                details: errors
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Grant service access error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to grant service access: ' + error.message
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Revoke Snowflake-level service access from a role
+app.post('/api/revoke-service-access', async (req, res) => {
+    let connection;
+    const { snowflakeRole } = req.body;
+    
+    if (!snowflakeRole) {
+        return res.status(400).json({
+            success: false,
+            error: 'snowflakeRole is required'
+        });
+    }
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Check if caller has MANAGE_ROLES permission
+        const hasPermission = await checkPermission(connection, 'MANAGE_ROLES', req);
+        if (!hasPermission) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your role does not have permission to manage role access'
+            });
+        }
+        
+        const roleName = sanitizeInput(snowflakeRole);
+        const revokes = [];
+        const errors = [];
+        
+        // Revoke in reverse order of grants
+        try {
+            await executeQuery(connection, `REVOKE USAGE ON WAREHOUSE COMPUTE_WH FROM ROLE ${roleName}`);
+            revokes.push('USAGE ON WAREHOUSE');
+        } catch (e) {
+            errors.push(`USAGE ON WAREHOUSE: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA CATALOG_DB.CATALOG_SCHEMA FROM ROLE ${roleName}`);
+            revokes.push('TABLE ACCESS');
+        } catch (e) {
+            errors.push(`TABLE ACCESS: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE USAGE ON SCHEMA CATALOG_DB.CATALOG_SCHEMA FROM ROLE ${roleName}`);
+            revokes.push('USAGE ON SCHEMA');
+        } catch (e) {
+            errors.push(`USAGE ON SCHEMA: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE USAGE ON DATABASE CATALOG_DB FROM ROLE ${roleName}`);
+            revokes.push('USAGE ON DATABASE');
+        } catch (e) {
+            errors.push(`USAGE ON DATABASE: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE USAGE ON COMPUTE POOL CATALOG_COMPUTE_POOL FROM ROLE ${roleName}`);
+            revokes.push('USAGE ON COMPUTE POOL');
+        } catch (e) {
+            errors.push(`USAGE ON COMPUTE POOL: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE BIND SERVICE ENDPOINT ON ACCOUNT FROM ROLE ${roleName}`);
+            revokes.push('BIND SERVICE ENDPOINT');
+        } catch (e) {
+            errors.push(`BIND SERVICE ENDPOINT: ${e.message}`);
+        }
+        
+        try {
+            await executeQuery(connection, `REVOKE USAGE ON SERVICE CATALOG_DB.CATALOG_SCHEMA.CATALOG_SERVICE FROM ROLE ${roleName}`);
+            revokes.push('USAGE ON SERVICE');
+        } catch (e) {
+            errors.push(`USAGE ON SERVICE: ${e.message}`);
+        }
+        
+        res.json({ 
+            success: true,
+            message: `Service access revoked from role ${roleName}`,
+            revokes: revokes,
+            warnings: errors.length > 0 ? errors : undefined
+        });
+        
+    } catch (error) {
+        console.error('❌ Revoke service access error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to revoke service access: ' + error.message
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Get current user's permissions based on their SPCS role header
+app.get('/api/my-permissions', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const spcsRole = req.headers['sf-context-current-role'] || 'PUBLIC';
+        
+        const query = `
+            SELECT rp.PERMISSION_TYPE
+            FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS rp
+            WHERE rp.SNOWFLAKE_ROLE = '${sanitizeInput(spcsRole)}'
+        `;
+        
+        const rows = await executeQuery(connection, query);
+        const permissions = rows.map(r => r.PERMISSION_TYPE);
+        
+        res.json({ 
+            success: true,
+            permissions: permissions,
+            hasAppAccess: permissions.includes('APP_ACCESS'),
+            canCreateRequests: permissions.includes('CREATE_REQUESTS'),
+            canApproveGlossary: permissions.includes('APPROVE_GLOSSARY'),
+            canApproveDataAccess: permissions.includes('APPROVE_DATA_ACCESS'),
+            canManageRoles: permissions.includes('MANAGE_ROLES')
+        });
+        
+    } catch (error) {
+        console.error('❌ Get my permissions error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to fetch permissions'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Check if current role has a specific permission
+app.get('/api/check-permission/:permissionType', async (req, res) => {
+    let connection;
+    const { permissionType } = req.params;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            SELECT COUNT(*) as HAS_PERMISSION
+            FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
+            WHERE SNOWFLAKE_ROLE = CURRENT_ROLE()
+            AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
+        `;
+        const rows = await executeQuery(connection, query);
+        
+        res.json({ 
+            success: true,
+            hasPermission: rows[0]?.HAS_PERMISSION > 0
+        });
+        
+    } catch (error) {
+        console.error('❌ Check permission error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to check permission'
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
 // ============================================================================
 // CATALOG METADATA ENDPOINTS
 // ============================================================================
@@ -283,7 +748,7 @@ app.get('/api/catalog', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         let query = 'SELECT DISTINCT e.* FROM ENRICHED_CATALOG e';
         
@@ -315,6 +780,7 @@ app.get('/api/catalog', async (req, res) => {
         query += ` ORDER BY e.VIEW_COUNT DESC, e.LAST_ALTERED DESC LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
         
         const rows = await executeQuery(connection, query);
+        
         res.json({ 
             success: true,
             data: rows,
@@ -340,7 +806,7 @@ app.get('/api/catalog/:database/:schema/:table', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT * FROM ENRICHED_CATALOG 
@@ -381,7 +847,7 @@ app.get('/api/columns/:database/:schema/:table', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT * FROM CATALOG_COLUMNS 
@@ -406,12 +872,65 @@ app.get('/api/columns/:database/:schema/:table', async (req, res) => {
     }
 });
 
+// Get data preview for a table (with fallback to synthetic data indicator)
+app.get('/api/tables/:tableName/preview', async (req, res) => {
+    const { tableName } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Attempt to query the actual table data
+        const query = `SELECT * FROM ${tableName} LIMIT ${limit}`;
+        
+        const rows = await executeQuery(connection, query);
+        res.json({ 
+            success: true,
+            hasAccess: true,
+            isSynthetic: false,
+            data: rows
+        });
+        
+    } catch (error) {
+        console.error('❌ Preview API error:', error.message);
+        
+        // Check if it's a permission error
+        const isPermissionError = error.message && (
+            error.message.includes('insufficient privileges') ||
+            error.message.includes('does not exist or not authorized') ||
+            error.message.includes('Object') && error.message.includes('does not exist')
+        );
+        
+        if (isPermissionError) {
+            // Return indicator that synthetic data should be shown
+            res.json({
+                success: true,
+                hasAccess: false,
+                isSynthetic: true,
+                data: [],
+                error: 'No access to table data'
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                hasAccess: false,
+                isSynthetic: true,
+                error: 'Failed to fetch preview data',
+                data: []
+            });
+        }
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
 // Get list of databases
 app.get('/api/databases', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT DISTINCT DATABASE_NAME, COUNT(*) as table_count
@@ -443,7 +962,7 @@ app.get('/api/schemas', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         let query = `
             SELECT DISTINCT SCHEMA_NAME, COUNT(*) as table_count
@@ -484,7 +1003,7 @@ app.get('/api/search', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT * FROM ENRICHED_CATALOG 
@@ -530,7 +1049,7 @@ app.post('/api/ratings', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             MERGE INTO USER_RATINGS t
@@ -564,7 +1083,7 @@ app.get('/api/ratings/:table', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT USER_NAME, RATING, CREATED_AT
@@ -612,7 +1131,7 @@ app.post('/api/comments', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             INSERT INTO USER_COMMENTS (TABLE_FULL_NAME, USER_NAME, COMMENT_TEXT)
@@ -642,7 +1161,7 @@ app.get('/api/comments/:table', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT COMMENT_ID, USER_NAME, COMMENT_TEXT, CREATED_AT, UPDATED_AT
@@ -689,7 +1208,7 @@ app.put('/api/description/:table', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Get current description
         const getCurrentQuery = `
@@ -761,7 +1280,7 @@ app.get('/api/description/:table', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT USER_DESCRIPTION, LAST_UPDATED_BY, UPDATED_AT
@@ -803,7 +1322,7 @@ app.post('/api/access-requests', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             INSERT INTO ACCESS_REQUESTS (
@@ -843,7 +1362,7 @@ app.get('/api/access-requests', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT REQUEST_ID, TABLE_FULL_NAME, REQUESTER, JUSTIFICATION, 
@@ -875,7 +1394,7 @@ app.get('/api/access-requests/pending', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -911,7 +1430,16 @@ app.put('/api/access-requests/:id/approve', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
+        
+        // Check permission
+        const hasPermission = await checkPermission(connection, 'APPROVE_DATA_ACCESS', req);
+        if (!hasPermission) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your role does not have permission to approve data access requests'
+            });
+        }
         
         const query = `
             UPDATE ACCESS_REQUESTS
@@ -946,7 +1474,7 @@ app.put('/api/access-requests/:id/request-info', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE ACCESS_REQUESTS
@@ -980,7 +1508,7 @@ app.put('/api/access-requests/:id/reassign', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE ACCESS_REQUESTS
@@ -1012,7 +1540,7 @@ app.put('/api/access-requests/:id/update-info', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE ACCESS_REQUESTS
@@ -1046,7 +1574,7 @@ app.put('/api/access-requests/:id/deny', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE ACCESS_REQUESTS
@@ -1083,7 +1611,7 @@ app.post('/api/refresh-catalog', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Step 1: Clear existing metadata
         console.log('📋 Clearing existing catalog metadata...');
@@ -1198,7 +1726,7 @@ app.post('/api/popularity/:database/:schema/:table', async (req, res) => {
     const fullTableName = `${database}.${schema}.${table}`;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             MERGE INTO TABLE_POPULARITY t
@@ -1232,7 +1760,7 @@ app.get('/api/tags', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // First execute SHOW TAGS IN ACCOUNT
         await executeQuery(connection, 'SHOW TAGS IN ACCOUNT');
@@ -1309,16 +1837,17 @@ app.get('/api/tag-references', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
+        // Query from TAG_CACHE table for real-time tag data
+        // This cache is populated by SYNC_TAG_CACHE_TASK hourly
+        // and updated immediately when tags are applied via the app
         const query = `
             SELECT 
-                OBJECT_DATABASE || '.' || OBJECT_SCHEMA || '.' || OBJECT_NAME as FULL_TABLE_NAME,
-                TAG_DATABASE || '.' || TAG_SCHEMA || '.' || TAG_NAME as FULL_TAG_NAME,
+                FULL_TABLE_NAME,
+                FULL_TAG_NAME,
                 COALESCE(TAG_VALUE, '') as TAG_VALUE
-            FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
-            WHERE OBJECT_DOMAIN = 'TABLE'
-              AND DELETED IS NULL
+            FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
             ORDER BY FULL_TABLE_NAME, FULL_TAG_NAME
         `;
         
@@ -1346,6 +1875,49 @@ app.get('/api/tag-references', async (req, res) => {
     }
 });
 
+// Get contacts for all tables (for client-side display in catalog browser)
+app.get('/api/contacts-bulk', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Try to fetch from CATALOG_CONTACTS table if it exists
+        const query = `
+            SELECT 
+                FULL_TABLE_NAME,
+                PURPOSE,
+                METHOD
+            FROM CATALOG_CONTACTS
+            WHERE PURPOSE IN ('DATA_OWNER', 'STEWARD', 'DOMAIN_EXPERT')
+            ORDER BY FULL_TABLE_NAME, PURPOSE
+        `;
+        
+        const rows = await executeQuery(connection, query);
+        
+        // Transform into a map: { "DB.SCHEMA.TABLE": [{PURPOSE: "DATA_OWNER", METHOD: "user@example.com"}, ...] }
+        const tableContactsMap = (rows || []).reduce((acc, row) => {
+            if (!acc[row.FULL_TABLE_NAME]) {
+                acc[row.FULL_TABLE_NAME] = [];
+            }
+            acc[row.FULL_TABLE_NAME].push({
+                PURPOSE: row.PURPOSE,
+                METHOD: row.METHOD
+            });
+            return acc;
+        }, {});
+        
+        res.json({ success: true, data: tableContactsMap });
+        
+    } catch (error) {
+        console.error('❌ Get bulk contacts error:', error.message);
+        // Return empty if table doesn't exist or other error
+        res.json({ success: true, data: {} });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
 // Get tags for a table
 app.get('/api/tags/:database/:schema/:table', async (req, res) => {
     let connection;
@@ -1353,7 +1925,7 @@ app.get('/api/tags/:database/:schema/:table', async (req, res) => {
     const fullTableName = `${database}.${schema}.${table}`;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT TAG_ID, TAG_NAME, CREATED_BY, CREATED_AT
@@ -1386,7 +1958,7 @@ app.post('/api/tags', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Get table contacts for assignment
         const contactsQuery = `
@@ -1448,7 +2020,7 @@ app.delete('/api/tags/:tagId', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Get tag details
         const getTagQuery = `SELECT TABLE_FULL_NAME, TAG_NAME FROM TABLE_TAGS WHERE TAG_ID = '${sanitizeInput(tagId)}'`;
@@ -1507,6 +2079,256 @@ app.delete('/api/tags/:tagId', async (req, res) => {
 });
 
 // ============================================================================
+// DATA PRODUCTS (Snowflake Tags)
+// ============================================================================
+
+// Get all unique Data Product tag values
+app.get('/api/data-products', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Query from TAG_CACHE for all DATA_PRODUCT tag values
+        // This gives us real-time data without ACCOUNT_USAGE latency
+        const query = `
+            SELECT DISTINCT TAG_VALUE
+            FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
+            WHERE TAG_NAME = 'DATA_PRODUCT'
+            AND TAG_SCHEMA = 'CATALOG_SCHEMA'
+            AND TAG_DATABASE = 'CATALOG_DB'
+            AND TAG_VALUE IS NOT NULL
+            ORDER BY TAG_VALUE
+        `;
+        
+        console.log('📦 Fetching data products from TAG_CACHE...');
+        const rows = await executeQuery(connection, query);
+        console.log('📦 Found data products:', rows.length, rows.map(r => r.TAG_VALUE));
+        
+        const dataProducts = rows.map(r => r.TAG_VALUE);
+        
+        res.json({ success: true, data: dataProducts });
+        
+    } catch (error) {
+        console.error('❌ Get data products error:', error.message);
+        
+        // Fallback: Return empty array if query fails (e.g., permission issues)
+        res.json({ success: true, data: [] });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Get Data Product tag for a specific table
+app.get('/api/tables/:database/:schema/:table/data-product', async (req, res) => {
+    let connection;
+    const { database, schema, table } = req.params;
+    const fullTableName = `${database}.${schema}.${table}`;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Try primary query using INFORMATION_SCHEMA.TAG_REFERENCES
+        const query = `
+            SELECT TAG_VALUE
+            FROM TABLE(INFORMATION_SCHEMA.TAG_REFERENCES(
+                '${sanitizeInput(fullTableName)}', 'TABLE'
+            ))
+            WHERE TAG_NAME = 'DATA_PRODUCT'
+            AND TAG_SCHEMA = 'CATALOG_SCHEMA'
+            AND TAG_DATABASE = 'CATALOG_DB'
+        `;
+        
+        console.log(`📦 Fetching Data Product for table: ${fullTableName}`);
+        const rows = await executeQuery(connection, query);
+        console.log(`📦 Primary query returned ${rows.length} rows`);
+        
+        if (rows.length > 0) {
+            const dataProduct = rows[0].TAG_VALUE;
+            console.log(`📦 Found Data Product: ${dataProduct}`);
+            res.json({ success: true, data: { dataProduct } });
+            return;
+        }
+        
+        // Fallback: Try querying as VIEW instead of TABLE
+        try {
+            console.log(`📦 Trying as VIEW...`);
+            const viewQuery = `
+                SELECT TAG_VALUE
+                FROM TABLE(INFORMATION_SCHEMA.TAG_REFERENCES(
+                    '${sanitizeInput(fullTableName)}', 'VIEW'
+                ))
+                WHERE TAG_NAME = 'DATA_PRODUCT'
+                AND TAG_SCHEMA = 'CATALOG_SCHEMA'
+                AND TAG_DATABASE = 'CATALOG_DB'
+            `;
+            const viewRows = await executeQuery(connection, viewQuery);
+            console.log(`📦 VIEW query returned ${viewRows.length} rows`);
+            
+            if (viewRows.length > 0) {
+                const dataProduct = viewRows[0].TAG_VALUE;
+                console.log(`📦 Found Data Product (as VIEW): ${dataProduct}`);
+                res.json({ success: true, data: { dataProduct } });
+                return;
+            }
+        } catch (viewErr) {
+            console.log(`📦 VIEW query failed: ${viewErr.message}`);
+        }
+        
+        // No data product found
+        console.log(`📦 No Data Product found for ${fullTableName}`);
+        res.json({ success: true, data: { dataProduct: null } });
+        
+    } catch (error) {
+        console.error('❌ Get table data product error:', error.message);
+        res.json({ success: true, data: { dataProduct: null } });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Set Data Product tag on a table
+app.post('/api/tables/:database/:schema/:table/data-product', async (req, res) => {
+    let connection;
+    const { database, schema, table } = req.params;
+    const { dataProduct } = req.body;
+    const fullTableName = `${database}.${schema}.${table}`;
+    
+    if (!dataProduct || !dataProduct.trim()) {
+        return res.status(400).json({
+            success: false,
+            error: 'Data Product name is required'
+        });
+    }
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        console.log(`📦 Setting Data Product "${dataProduct.trim()}" on ${fullTableName}`);
+        
+        // Set the DATA_PRODUCT tag on the table
+        // Note: The same tag value can be applied to multiple tables/views
+        const query = `
+            ALTER TABLE ${sanitizeInput(fullTableName)}
+            SET TAG CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT = '${sanitizeInput(dataProduct.trim())}'
+        `;
+        
+        await executeQuery(connection, query);
+        console.log(`📦 Successfully set Data Product tag on TABLE ${fullTableName}`);
+        
+        // Refresh the TAG_CACHE for this object
+        try {
+            await executeQuery(connection, `CALL CATALOG_DB.CATALOG_SCHEMA.REFRESH_TAG_CACHE_FOR_OBJECT('${sanitizeInput(fullTableName)}', 'TABLE')`);
+            console.log(`📦 Refreshed TAG_CACHE for ${fullTableName}`);
+        } catch (cacheErr) {
+            console.log(`📦 TAG_CACHE refresh warning: ${cacheErr.message}`);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: `Table added to Data Product: ${dataProduct.trim()}`
+        });
+        
+    } catch (error) {
+        console.error('❌ Set data product error (TABLE):', error.message);
+        
+        // Try with VIEW if TABLE fails
+        try {
+            console.log(`📦 Trying as VIEW...`);
+            const viewQuery = `
+                ALTER VIEW ${sanitizeInput(fullTableName)}
+                SET TAG CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT = '${sanitizeInput(dataProduct.trim())}'
+            `;
+            await executeQuery(connection, viewQuery);
+            console.log(`📦 Successfully set Data Product tag on VIEW ${fullTableName}`);
+            
+            // Refresh the TAG_CACHE for this object
+            try {
+                await executeQuery(connection, `CALL CATALOG_DB.CATALOG_SCHEMA.REFRESH_TAG_CACHE_FOR_OBJECT('${sanitizeInput(fullTableName)}', 'VIEW')`);
+                console.log(`📦 Refreshed TAG_CACHE for ${fullTableName}`);
+            } catch (cacheErr) {
+                console.log(`📦 TAG_CACHE refresh warning: ${cacheErr.message}`);
+            }
+            
+            res.json({ 
+                success: true, 
+                message: `View added to Data Product: ${dataProduct.trim()}`
+            });
+        } catch (viewError) {
+            console.error('❌ Set data product error (VIEW):', viewError.message);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Failed to set Data Product tag. Ensure you have APPLY TAG privileges.'
+            });
+        }
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// Remove Data Product tag from a table
+app.delete('/api/tables/:database/:schema/:table/data-product', async (req, res) => {
+    let connection;
+    const { database, schema, table } = req.params;
+    const fullTableName = `${database}.${schema}.${table}`;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        // Remove the DATA_PRODUCT tag from the table
+        const query = `
+            ALTER TABLE ${sanitizeInput(fullTableName)}
+            UNSET TAG CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT
+        `;
+        
+        await executeQuery(connection, query);
+        
+        // Refresh the TAG_CACHE for this object
+        try {
+            await executeQuery(connection, `CALL CATALOG_DB.CATALOG_SCHEMA.REFRESH_TAG_CACHE_FOR_OBJECT('${sanitizeInput(fullTableName)}', 'TABLE')`);
+        } catch (cacheErr) {
+            console.log(`📦 TAG_CACHE refresh warning: ${cacheErr.message}`);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Data Product tag removed from table'
+        });
+        
+    } catch (error) {
+        console.error('❌ Remove data product error:', error);
+        
+        // Try with VIEW if TABLE fails
+        try {
+            const viewQuery = `
+                ALTER VIEW ${sanitizeInput(fullTableName)}
+                UNSET TAG CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT
+            `;
+            await executeQuery(connection, viewQuery);
+            
+            // Refresh the TAG_CACHE for this object
+            try {
+                await executeQuery(connection, `CALL CATALOG_DB.CATALOG_SCHEMA.REFRESH_TAG_CACHE_FOR_OBJECT('${sanitizeInput(fullTableName)}', 'VIEW')`);
+            } catch (cacheErr) {
+                console.log(`📦 TAG_CACHE refresh warning: ${cacheErr.message}`);
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Data Product tag removed from view'
+            });
+        } catch (viewError) {
+            res.status(500).json({ 
+                success: false, 
+                error: 'Failed to remove Data Product tag'
+            });
+        }
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
+// ============================================================================
 // LINEAGE
 // ============================================================================
 
@@ -1517,7 +2339,7 @@ app.get('/api/lineage/:database/:schema/:table', async (req, res) => {
     const fullTableName = `${database}.${schema}.${table}`;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Get upstream lineage (sources)
         const upstreamQuery = `
@@ -1557,14 +2379,30 @@ app.get('/api/lineage/:database/:schema/:table', async (req, res) => {
         // Transform to the format expected by the frontend
         const upstream = upstreamRows.map(row => ({
             SOURCE_TABLE: `${row.SOURCE_OBJECT_DATABASE}.${row.SOURCE_OBJECT_SCHEMA}.${row.SOURCE_OBJECT_NAME}`,
+            SOURCE_DATABASE: row.SOURCE_OBJECT_DATABASE,
+            SOURCE_SCHEMA: row.SOURCE_OBJECT_SCHEMA,
+            SOURCE_NAME: row.SOURCE_OBJECT_NAME,
+            SOURCE_DOMAIN: row.SOURCE_OBJECT_DOMAIN,
             TARGET_TABLE: fullTableName,
+            TARGET_DATABASE: database,
+            TARGET_SCHEMA: schema,
+            TARGET_NAME: table,
+            TARGET_DOMAIN: 'TABLE',
             LINEAGE_TYPE: 'UPSTREAM',
             DISTANCE: row.DISTANCE
         }));
         
         const downstream = downstreamRows.map(row => ({
             SOURCE_TABLE: fullTableName,
+            SOURCE_DATABASE: database,
+            SOURCE_SCHEMA: schema,
+            SOURCE_NAME: table,
+            SOURCE_DOMAIN: 'TABLE',
             TARGET_TABLE: `${row.TARGET_OBJECT_DATABASE}.${row.TARGET_OBJECT_SCHEMA}.${row.TARGET_OBJECT_NAME}`,
+            TARGET_DATABASE: row.TARGET_OBJECT_DATABASE,
+            TARGET_SCHEMA: row.TARGET_OBJECT_SCHEMA,
+            TARGET_NAME: row.TARGET_OBJECT_NAME,
+            TARGET_DOMAIN: row.TARGET_OBJECT_DOMAIN,
             LINEAGE_TYPE: 'DOWNSTREAM',
             DISTANCE: row.DISTANCE
         }));
@@ -1600,7 +2438,7 @@ app.post('/api/change-requests', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         // Try to get contacts for assignment (if target is a table)
         let assignedTo = null;
@@ -1667,7 +2505,7 @@ app.get('/api/change-requests/all-attributes', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -1711,7 +2549,7 @@ app.get('/api/change-requests/my-requests', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -1767,7 +2605,7 @@ app.put('/api/change-requests/:id/update', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE CHANGE_REQUESTS
@@ -1804,7 +2642,7 @@ app.get('/api/change-requests/pending', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -1839,7 +2677,7 @@ app.get('/api/change-requests/my-requests', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -1880,7 +2718,16 @@ app.put('/api/change-requests/:id/approve', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
+        
+        // Check permission
+        const hasPermission = await checkPermission(connection, 'APPROVE_GLOSSARY', req);
+        if (!hasPermission) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your role does not have permission to approve glossary/content changes'
+            });
+        }
         
         // Get request details
         const getQuery = `
@@ -2048,7 +2895,7 @@ app.put('/api/change-requests/:id/deny', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE CHANGE_REQUESTS
@@ -2090,7 +2937,7 @@ app.put('/api/change-requests/:id/return', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             UPDATE CHANGE_REQUESTS
@@ -2127,7 +2974,7 @@ app.get('/api/attributes', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -2160,7 +3007,7 @@ app.get('/api/attributes/:name/enumerations', async (req, res) => {
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -2186,6 +3033,53 @@ app.get('/api/attributes/:name/enumerations', async (req, res) => {
     }
 });
 
+// Get glossary attributes for all tables (for client-side display in catalog browser)
+app.get('/api/glossary-bulk', async (req, res) => {
+    let connection;
+    
+    try {
+        connection = await connectToSnowflake(req);
+        
+        const query = `
+            SELECT 
+                l.TABLE_FULL_NAME,
+                l.ATTRIBUTE_NAME,
+                a.DISPLAY_NAME,
+                a.DESCRIPTION
+            FROM COLUMN_ATTRIBUTES l
+            JOIN ATTRIBUTE_DEFINITIONS a ON l.ATTRIBUTE_NAME = a.ATTRIBUTE_NAME
+            ORDER BY l.TABLE_FULL_NAME, l.ATTRIBUTE_NAME
+        `;
+        
+        const rows = await executeQuery(connection, query);
+        
+        // Transform into a map: { "DB.SCHEMA.TABLE": [{ATTRIBUTE_NAME: "PII", DISPLAY_NAME: "PII Data"}, ...] }
+        const tableGlossaryMap = (rows || []).reduce((acc, row) => {
+            if (!acc[row.TABLE_FULL_NAME]) {
+                acc[row.TABLE_FULL_NAME] = [];
+            }
+            // Only add if not already present (deduplicate)
+            const existing = acc[row.TABLE_FULL_NAME].find(g => g.ATTRIBUTE_NAME === row.ATTRIBUTE_NAME);
+            if (!existing) {
+                acc[row.TABLE_FULL_NAME].push({
+                    ATTRIBUTE_NAME: row.ATTRIBUTE_NAME,
+                    DISPLAY_NAME: row.DISPLAY_NAME || row.ATTRIBUTE_NAME,
+                    DESCRIPTION: row.DESCRIPTION
+                });
+            }
+            return acc;
+        }, {});
+        
+        res.json({ success: true, data: tableGlossaryMap });
+        
+    } catch (error) {
+        console.error('❌ Get bulk glossary error:', error.message);
+        res.json({ success: true, data: {} });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
 // Get column attribute linkages for a table
 app.get('/api/columns/:database/:schema/:table/attributes', async (req, res) => {
     const { database, schema, table } = req.params;
@@ -2193,7 +3087,7 @@ app.get('/api/columns/:database/:schema/:table/attributes', async (req, res) => 
     let connection;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT 
@@ -2234,7 +3128,7 @@ app.post('/api/columns/link-attribute', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             INSERT INTO COLUMN_ATTRIBUTES (TABLE_FULL_NAME, COLUMN_NAME, ATTRIBUTE_NAME, LINKED_BY)
@@ -2275,7 +3169,7 @@ app.post('/api/columns/unlink-attribute', async (req, res) => {
     }
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             DELETE FROM COLUMN_ATTRIBUTES
@@ -2306,7 +3200,7 @@ app.get('/api/contacts/:database/:schema/:table', async (req, res) => {
     const fullTableName = `${database}.${schema}.${table}`;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
         
         const query = `
             SELECT *
@@ -2331,7 +3225,16 @@ app.put('/api/access-requests/:id/approve-with-grant', async (req, res) => {
     const { approver, comment, accessType, grantToName } = req.body;
     
     try {
-        connection = await connectToSnowflake('demo142_cursor');
+        connection = await connectToSnowflake(req);
+        
+        // Check permission
+        const hasPermission = await checkPermission(connection, 'APPROVE_DATA_ACCESS', req);
+        if (!hasPermission) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your role does not have permission to approve data access requests'
+            });
+        }
         
         // Get request details
         const getRequestQuery = `
@@ -2417,13 +3320,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    const isInContainer = isRunningInSnowflakeContainer();
-    
-    if (isInContainer) {
-        console.log(`🚀 Server running in SPCS container on port ${PORT}`);
-        console.log('📊 App will be available via SPCS service endpoint');
-    } else {
-        console.log(`🚀 Server running locally on http://${HOST}:${PORT}`);
-        console.log(`🔍 Health check: http://${HOST}:${PORT}/api/health`);
-    }
+    console.log(`🚀 Server running in SPCS container on port ${PORT}`);
+    console.log('📊 App available via SPCS service endpoint');
 });

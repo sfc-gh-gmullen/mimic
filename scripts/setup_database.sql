@@ -104,6 +104,37 @@ CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.ACCESS_REQUESTS (
 COMMENT = 'Data access request workflow tracking';
 
 -- ============================================================================
+-- ROLE PERMISSIONS TABLE
+-- ============================================================================
+
+-- Table to store role-based permissions for catalog features
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS (
+    PERMISSION_ID STRING DEFAULT UUID_STRING(),
+    SNOWFLAKE_ROLE STRING NOT NULL,
+    PERMISSION_TYPE STRING NOT NULL,  -- APP_ACCESS, CREATE_REQUESTS, APPROVE_GLOSSARY, APPROVE_DATA_ACCESS, MANAGE_ROLES
+    GRANTED_BY STRING,
+    GRANTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (PERMISSION_ID),
+    UNIQUE (SNOWFLAKE_ROLE, PERMISSION_TYPE)
+)
+COMMENT = 'Role-based permissions for catalog features';
+
+-- Insert default permissions for CATALOG_SERVICE_ROLE (all permissions)
+INSERT INTO CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS (SNOWFLAKE_ROLE, PERMISSION_TYPE, GRANTED_BY)
+SELECT 'CATALOG_SERVICE_ROLE', permission_type, 'SYSTEM'
+FROM (
+    SELECT 'APP_ACCESS' as permission_type UNION ALL
+    SELECT 'CREATE_REQUESTS' UNION ALL
+    SELECT 'APPROVE_GLOSSARY' UNION ALL
+    SELECT 'APPROVE_DATA_ACCESS' UNION ALL
+    SELECT 'MANAGE_ROLES'
+) permissions
+WHERE NOT EXISTS (
+    SELECT 1 FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS 
+    WHERE SNOWFLAKE_ROLE = 'CATALOG_SERVICE_ROLE' AND PERMISSION_TYPE = permissions.permission_type
+);
+
+-- ============================================================================
 -- BUSINESS GLOSSARY TABLES
 -- ============================================================================
 
@@ -168,6 +199,69 @@ CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CHANGE_REQUESTS (
 COMMENT = 'Change request workflow for descriptions, tags, and enumerations';
 
 -- ============================================================================
+-- CONTACTS TABLE
+-- ============================================================================
+
+-- Table to store contact information for tables (Owner, Steward, Domain Expert)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.CATALOG_CONTACTS (
+    CONTACT_ID STRING DEFAULT UUID_STRING(),
+    FULL_TABLE_NAME STRING NOT NULL,
+    PURPOSE STRING NOT NULL,  -- DATA_OWNER, STEWARD, DOMAIN_EXPERT, etc.
+    METHOD STRING NOT NULL,   -- Email, username, or other contact method
+    CREATED_BY STRING,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_BY STRING,
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (CONTACT_ID),
+    UNIQUE (FULL_TABLE_NAME, PURPOSE)
+)
+COMMENT = 'Contact information for datasets (owners, stewards, domain experts)';
+
+-- ============================================================================
+-- DATA PRODUCT TAG
+-- ============================================================================
+
+-- Create a Snowflake tag for Data Products (to group related tables/views)
+CREATE TAG IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT
+  COMMENT = 'Tag to group tables and views into logical Data Products';
+
+-- ============================================================================
+-- POPULARITY AND TRACKING TABLES
+-- ============================================================================
+
+-- Table to track dataset popularity (views/accesses)
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_POPULARITY (
+    TABLE_FULL_NAME STRING NOT NULL,
+    VIEW_COUNT NUMBER DEFAULT 0,
+    LAST_VIEWED TIMESTAMP_NTZ,
+    UNIQUE_VIEWERS NUMBER DEFAULT 0,
+    PRIMARY KEY (TABLE_FULL_NAME)
+)
+COMMENT = 'Dataset popularity metrics';
+
+-- Table for user-defined tags
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_TAGS (
+    TAG_ID STRING DEFAULT UUID_STRING(),
+    TABLE_FULL_NAME STRING NOT NULL,
+    TAG_NAME STRING NOT NULL,
+    CREATED_BY STRING NOT NULL,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TAG_ID)
+)
+COMMENT = 'User-defined tags for datasets';
+
+-- Table for lineage information
+CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_LINEAGE (
+    LINEAGE_ID STRING DEFAULT UUID_STRING(),
+    SOURCE_TABLE STRING NOT NULL,
+    TARGET_TABLE STRING NOT NULL,
+    LINEAGE_TYPE STRING NOT NULL,
+    DISCOVERED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (LINEAGE_ID)
+)
+COMMENT = 'Data lineage relationships between tables';
+
+-- ============================================================================
 -- ENRICHED VIEWS
 -- ============================================================================
 
@@ -209,42 +303,6 @@ GROUP BY
     m.ROW_COUNT, m.BYTES, m.CREATED, m.LAST_ALTERED, m.COMMENT,
     d.USER_DESCRIPTION, d.LAST_UPDATED_BY, d.UPDATED_AT, m.CACHED_AT,
     p.VIEW_COUNT, p.UNIQUE_VIEWERS, p.LAST_VIEWED;
-
--- ============================================================================
--- GRANT PERMISSIONS TO CATALOG_ROLE ON ALL DATABASES
--- ============================================================================
-
--- Table to track dataset popularity (views/accesses)
-CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_POPULARITY (
-    TABLE_FULL_NAME STRING NOT NULL,
-    VIEW_COUNT NUMBER DEFAULT 0,
-    LAST_VIEWED TIMESTAMP_NTZ,
-    UNIQUE_VIEWERS NUMBER DEFAULT 0,
-    PRIMARY KEY (TABLE_FULL_NAME)
-)
-COMMENT = 'Dataset popularity metrics';
-
--- Table for user-defined tags
-CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_TAGS (
-    TAG_ID STRING DEFAULT UUID_STRING(),
-    TABLE_FULL_NAME STRING NOT NULL,
-    TAG_NAME STRING NOT NULL,
-    CREATED_BY STRING NOT NULL,
-    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    PRIMARY KEY (TAG_ID)
-)
-COMMENT = 'User-defined tags for datasets';
-
--- Table for lineage information
-CREATE TABLE IF NOT EXISTS CATALOG_DB.CATALOG_SCHEMA.TABLE_LINEAGE (
-    LINEAGE_ID STRING DEFAULT UUID_STRING(),
-    SOURCE_TABLE STRING NOT NULL,
-    TARGET_TABLE STRING NOT NULL,
-    LINEAGE_TYPE STRING NOT NULL,
-    DISCOVERED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    PRIMARY KEY (LINEAGE_ID)
-)
-COMMENT = 'Data lineage relationships between tables';
 
 -- Note: In a real deployment, you would need to grant USAGE on all existing databases
 -- This script provides a template - execute these grants as ACCOUNTADMIN for each database:
@@ -318,7 +376,24 @@ $$;
 -- ============================================================================
 
 SELECT 'Data Catalog Database created successfully' as status;
-SELECT 'Tables created: CATALOG_METADATA, CATALOG_COLUMNS, USER_RATINGS, USER_COMMENTS, TABLE_DESCRIPTIONS, ACCESS_REQUESTS' as tables;
+SELECT 'Tables created: CATALOG_METADATA, CATALOG_COLUMNS, USER_RATINGS, USER_COMMENTS, TABLE_DESCRIPTIONS, ACCESS_REQUESTS, ROLE_PERMISSIONS, CATALOG_CONTACTS, ATTRIBUTE_DEFINITIONS, ATTRIBUTE_ENUMERATIONS, COLUMN_ATTRIBUTES, CHANGE_REQUESTS, TABLE_POPULARITY, TABLE_TAGS, TABLE_LINEAGE' as tables;
+
+-- ============================================================================
+-- SERVICE ROLE GRANTS
+-- ============================================================================
+
+-- Grant full access on all catalog tables to CATALOG_SERVICE_ROLE
+GRANT ALL ON ALL TABLES IN SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE CATALOG_SERVICE_ROLE;
+GRANT ALL ON ALL VIEWS IN SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE CATALOG_SERVICE_ROLE;
+GRANT ALL ON FUTURE TABLES IN SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE CATALOG_SERVICE_ROLE;
+GRANT ALL ON FUTURE VIEWS IN SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE CATALOG_SERVICE_ROLE;
+
+-- Grant usage on schema and database
+GRANT USAGE ON DATABASE CATALOG_DB TO ROLE CATALOG_SERVICE_ROLE;
+GRANT USAGE ON SCHEMA CATALOG_DB.CATALOG_SCHEMA TO ROLE CATALOG_SERVICE_ROLE;
+
+-- Grant APPLY TAG privilege for the DATA_PRODUCT tag
+GRANT APPLY ON TAG CATALOG_DB.CATALOG_SCHEMA.DATA_PRODUCT TO ROLE CATALOG_SERVICE_ROLE;
 
 -- Show current configuration
 SELECT CURRENT_DATABASE() as database_name, 

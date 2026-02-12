@@ -19,6 +19,7 @@ SCHEMA_NAME="CATALOG_SCHEMA"
 SERVICE_NAME="CATALOG_SERVICE"
 IMAGE_TAG="latest"
 CONNECTION="demo142_cursor"
+SERVICE_ROLE="SYSADMIN"
 
 # Parse command line arguments
 SKIP_DB_SETUP=false
@@ -72,9 +73,22 @@ fi
 # Step 1: Database setup (skippable)
 if [ "$SKIP_DB_SETUP" = false ]; then
     echo -e "${YELLOW}🗄️  Setting up database...${NC}"
-    snow sql -f scripts/create_app_role.sql -c $CONNECTION
-    snow sql -f scripts/setup_database.sql -c $CONNECTION
-    snow sql -f snowflake/setup_image_repo.sql -c $CONNECTION
+    
+    # Note: scripts/create_service_role.sql must be run ONCE by ACCOUNTADMIN before first deployment
+    # This creates CATALOG_SERVICE_ROLE with necessary privileges
+    # Run manually: snow sql -f scripts/create_service_role.sql -c $CONNECTION
+    
+    # Check if CATALOG_SERVICE_ROLE exists
+    ROLE_EXISTS=$(snow sql -q "SHOW ROLES LIKE 'CATALOG_SERVICE_ROLE';" -c $CONNECTION --format CSV 2>/dev/null | grep -c "CATALOG_SERVICE_ROLE" || echo "0")
+    if [ "$ROLE_EXISTS" = "0" ]; then
+        echo -e "${RED}❌ CATALOG_SERVICE_ROLE does not exist.${NC}"
+        echo -e "${YELLOW}   Run the following command as ACCOUNTADMIN first:${NC}"
+        echo -e "${BLUE}   snow sql -f scripts/create_service_role.sql -c $CONNECTION${NC}"
+        exit 1
+    fi
+    
+    snow sql -f scripts/setup_database.sql -c $CONNECTION --role $SERVICE_ROLE
+    snow sql -f snowflake/setup_image_repo.sql -c $CONNECTION --role $SERVICE_ROLE
 else
     echo -e "${BLUE}⏭️  Skipping database setup${NC}"
 fi
@@ -89,7 +103,7 @@ fi
 
 # Step 3: Get registry URL
 echo -e "${YELLOW}🔍 Getting registry URL...${NC}"
-REGISTRY_URL=$(snow sql -q "SHOW IMAGE REPOSITORIES IN SCHEMA ${DATABASE_NAME}.IMAGE_SCHEMA;" -c $CONNECTION --format CSV | grep IMAGE_REPO | cut -d',' -f5 | tr -d '"')
+REGISTRY_URL=$(snow sql -q "SHOW IMAGE REPOSITORIES IN SCHEMA ${DATABASE_NAME}.IMAGE_SCHEMA;" -c $CONNECTION --role $SERVICE_ROLE --format CSV | grep IMAGE_REPO | cut -d',' -f5 | tr -d '"')
 if [ -z "$REGISTRY_URL" ]; then
     echo -e "${RED}❌ Failed to get registry URL${NC}"
     exit 1
@@ -108,20 +122,20 @@ docker push ${SNOWFLAKE_IMAGE_URL}
 
 # Step 5: Deploy service (restart with new image)
 echo -e "${YELLOW}☁️  Deploying SPCS service...${NC}"
-snow sql -q "ALTER SERVICE IF EXISTS ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME} SUSPEND;" -c $CONNECTION 2>/dev/null || true
-snow sql -f snowflake/deploy.sql -c $CONNECTION
+snow sql -q "ALTER SERVICE IF EXISTS ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME} SUSPEND;" -c $CONNECTION --role $SERVICE_ROLE 2>/dev/null || true
+snow sql -f snowflake/deploy.sql -c $CONNECTION --role $SERVICE_ROLE
 
 # Step 6: Wait for service ready
 echo -e "${YELLOW}⏳ Waiting for service...${NC}"
 for i in {1..30}; do
-    STATUS=$(snow sql -q "SELECT SYSTEM\$GET_SERVICE_STATUS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}');" -c $CONNECTION --format CSV 2>/dev/null | tail -1)
+    STATUS=$(snow sql -q "SELECT SYSTEM\$GET_SERVICE_STATUS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}');" -c $CONNECTION --role $SERVICE_ROLE --format CSV 2>/dev/null | tail -1)
     
     if [[ "$STATUS" == *"READY"* ]]; then
         echo -e "${GREEN}✅ Service ready!${NC}"
         break
     elif [[ "$STATUS" == *"FAILED"* ]]; then
         echo -e "${RED}❌ Deployment failed. Check logs:${NC}"
-        echo "snow sql -q \"CALL SYSTEM\$GET_SERVICE_LOGS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}', '0');\" -c $CONNECTION"
+        echo "snow sql -q \"CALL SYSTEM\$GET_SERVICE_LOGS('${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME}', '0');\" -c $CONNECTION --role $SERVICE_ROLE"
         exit 1
     fi
     
@@ -131,7 +145,7 @@ done
 
 # Step 7: Get and display endpoint
 sleep 5  # Brief wait for endpoint provisioning
-ENDPOINT=$(snow sql -q "SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};" -c $CONNECTION 2>&1 | grep -oE '[a-z0-9]+-[a-z0-9-]+\.snowflakecomputing\.app' | head -1)
+ENDPOINT=$(snow sql -q "SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};" -c $CONNECTION --role $SERVICE_ROLE 2>&1 | grep -oE '[a-z0-9]+-[a-z0-9-]+\.snowflakecomputing\.app' | head -1)
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}🎉 Deployment complete!${NC}"
@@ -139,6 +153,6 @@ echo -e "${GREEN}   Service: ${SERVICE_NAME}${NC}"
 if [ ! -z "$ENDPOINT" ]; then
     echo -e "${GREEN}   URL: https://${ENDPOINT}${NC}"
 else
-    echo -e "${YELLOW}   URL: Provisioning... run 'snow sql -q \"SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};\" -c $CONNECTION'${NC}"
+    echo -e "${YELLOW}   URL: Provisioning... run 'snow sql -q \"SHOW ENDPOINTS IN SERVICE ${DATABASE_NAME}.${SCHEMA_NAME}.${SERVICE_NAME};\" -c $CONNECTION --role $SERVICE_ROLE'${NC}"
 fi
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

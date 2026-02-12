@@ -20,7 +20,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, type = 
       case 'warning':
         return { icon: '⚠', color: '#ffc107', bgColor: '#fff3cd' };
       case 'prompt':
-        return { icon: '✏️', color: '#667eea', bgColor: '#e7e9fd' };
+        return { icon: '✏️', color: '#29B5E8', bgColor: '#e7e9fd' };
       default:
         return { icon: 'ℹ', color: '#17a2b8', bgColor: '#d1ecf1' };
     }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import MessageModal from './MessageModal';
 
 interface Attribute {
   ATTRIBUTE_NAME: string;
@@ -38,6 +39,29 @@ const AttributeManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showPendingRequests, setShowPendingRequests] = useState(false);
+  
+  // Change request modal state
+  const [showChangeRequestModal, setShowChangeRequestModal] = useState(false);
+  const [changeRequestData, setChangeRequestData] = useState({
+    justification: '',
+    newDescription: ''
+  });
+  
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
+
+  const showMessage = (title: string, message: string, type: 'success' | 'error' | 'info') => {
+    setModalState({ isOpen: true, title, message, type });
+  };
 
   useEffect(() => {
     fetchAttributes();
@@ -90,31 +114,166 @@ const AttributeManager: React.FC = () => {
   };
 
   const getStatusBadge = (status: string) => {
-    const statusStyles: { [key: string]: { bg: string; color: string; label: string } } = {
-      'pending': { bg: '#fff3cd', color: '#856404', label: '⏳ Pending' },
-      'more_info_needed': { bg: '#ffc107', color: '#212529', label: '↩️ More Info Needed' },
-      'approved': { bg: '#d4edda', color: '#155724', label: '✓ Approved' },
-      'denied': { bg: '#f8d7da', color: '#721c24', label: '✗ Denied' }
+    const statusStyles: { [key: string]: { bg: string; color: string; label: string; icon: string; border: string } } = {
+      'pending': { 
+        bg: '#FFF4E6', 
+        color: '#E67E22', 
+        label: 'Pending Review', 
+        icon: '⏳',
+        border: '#F39C12'
+      },
+      'more_info_needed': { 
+        bg: '#FFF3E0', 
+        color: '#F57C00', 
+        label: 'Info Requested', 
+        icon: '📝',
+        border: '#FF9800'
+      },
+      'approved': { 
+        bg: '#E8F5E9', 
+        color: '#2E7D32', 
+        label: 'Approved', 
+        icon: '✅',
+        border: '#4CAF50'
+      },
+      'denied': { 
+        bg: '#FFEBEE', 
+        color: '#C62828', 
+        label: 'Denied', 
+        icon: '❌',
+        border: '#F44336'
+      }
     };
-    const style = statusStyles[status] || { bg: '#e9ecef', color: '#495057', label: status };
+    const style = statusStyles[status] || { 
+      bg: '#F5F5F5', 
+      color: '#616161', 
+      label: status, 
+      icon: '•',
+      border: '#9E9E9E'
+    };
     return (
-      <span style={{
-        padding: '4px 12px',
-        backgroundColor: style.bg,
-        color: style.color,
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{
+          padding: '6px 16px',
+          backgroundColor: style.bg,
+          color: style.color,
+          border: `2px solid ${style.border}`,
+          borderRadius: '20px',
+          fontSize: '0.85em',
+          fontWeight: '700',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px'
+        }}>
+          <span style={{ fontSize: '1.1em' }}>{style.icon}</span>
+          {style.label}
+        </span>
+      </div>
+    );
+  };
+
+  const getWorkflowTimeline = (request: AttributeRequest) => {
+    const steps = [
+      { 
+        label: 'Submitted', 
+        completed: true, 
+        date: new Date(request.REQUESTED_AT).toLocaleDateString(),
+        icon: '📤'
+      },
+      { 
+        label: 'Review', 
+        completed: request.STATUS !== 'pending',
+        active: request.STATUS === 'pending' || request.STATUS === 'more_info_needed',
+        date: request.STATUS === 'more_info_needed' ? 'In Progress' : '',
+        icon: '👀'
+      },
+      { 
+        label: request.STATUS === 'denied' ? 'Denied' : 'Approved', 
+        completed: request.STATUS === 'approved' || request.STATUS === 'denied',
+        date: request.STATUS === 'approved' || request.STATUS === 'denied' ? 'Completed' : '',
+        icon: request.STATUS === 'denied' ? '❌' : '✅',
+        isDenied: request.STATUS === 'denied'
+      }
+    ];
+
+    return (
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '8px',
+        padding: '16px',
+        backgroundColor: '#F8F9FA',
         borderRadius: '12px',
-        fontSize: '0.85em',
-        fontWeight: '600'
+        marginTop: '12px'
       }}>
-        {style.label}
-      </span>
+        {steps.map((step, idx) => (
+          <React.Fragment key={idx}>
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              flex: 1
+            }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: step.completed 
+                  ? (step.isDenied ? '#F44336' : '#4CAF50')
+                  : step.active 
+                    ? '#FF9800' 
+                    : '#E0E0E0',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.2em',
+                fontWeight: '700',
+                boxShadow: step.completed || step.active ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
+                transition: 'all 0.3s ease'
+              }}>
+                {step.icon}
+              </div>
+              <div style={{ 
+                marginTop: '8px', 
+                fontSize: '0.75em', 
+                fontWeight: '600',
+                color: step.completed || step.active ? '#212529' : '#9E9E9E',
+                textAlign: 'center'
+              }}>
+                {step.label}
+              </div>
+              {step.date && (
+                <div style={{ 
+                  fontSize: '0.7em', 
+                  color: '#6c757d',
+                  marginTop: '2px'
+                }}>
+                  {step.date}
+                </div>
+              )}
+            </div>
+            {idx < steps.length - 1 && (
+              <div style={{
+                flex: 0.5,
+                height: '3px',
+                backgroundColor: step.completed ? (steps[idx + 1].isDenied ? '#F44336' : '#4CAF50') : '#E0E0E0',
+                borderRadius: '2px',
+                marginBottom: '40px'
+              }} />
+            )}
+          </React.Fragment>
+        ))}
+      </div>
     );
   };
 
   if (loading) {
     return (
       <div style={{ 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
         borderRadius: '20px', 
         padding: '32px', 
         boxShadow: '0 10px 40px rgba(0,0,0,0.15)'
@@ -133,13 +292,21 @@ const AttributeManager: React.FC = () => {
   }
 
   return (
-    <div style={{ 
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      borderRadius: '20px', 
-      padding: '32px', 
-      boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
-      marginBottom: '24px'
-    }}>
+    <>
+      <MessageModal
+        isOpen={modalState.isOpen}
+        onClose={() => setModalState(prev => ({ ...prev, isOpen: false }))}
+        title={modalState.title}
+        message={modalState.message}
+        type={modalState.type}
+      />
+      <div style={{ 
+        background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
+        borderRadius: '20px', 
+        padding: '32px', 
+        boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+        marginBottom: '24px'
+      }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h2 style={{ color: 'white', margin: '0 0 8px 0', fontSize: '1.75em' }}>🏷️ Business Glossary Manager</h2>
@@ -153,7 +320,7 @@ const AttributeManager: React.FC = () => {
             style={{
               padding: '12px 24px',
               backgroundColor: pendingRequests.length > 0 ? '#ffc107' : 'rgba(255,255,255,0.8)',
-              color: pendingRequests.length > 0 ? '#212529' : '#667eea',
+              color: pendingRequests.length > 0 ? '#212529' : '#29B5E8',
               border: 'none',
               borderRadius: '12px',
               cursor: 'pointer',
@@ -167,7 +334,7 @@ const AttributeManager: React.FC = () => {
             onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
           >
             📋 Pending Requests
-            {pendingRequests.length > 0 && (
+            {pendingRequests.filter(r => r.STATUS === 'pending' || r.STATUS === 'more_info_needed').length > 0 && (
               <span style={{
                 position: 'absolute',
                 top: '-8px',
@@ -183,7 +350,7 @@ const AttributeManager: React.FC = () => {
                 fontSize: '0.75em',
                 fontWeight: '700'
               }}>
-                {pendingRequests.length}
+                {pendingRequests.filter(r => r.STATUS === 'pending' || r.STATUS === 'more_info_needed').length}
               </span>
             )}
           </button>
@@ -192,7 +359,7 @@ const AttributeManager: React.FC = () => {
             style={{
               padding: '12px 24px',
               backgroundColor: 'white',
-              color: '#667eea',
+              color: '#29B5E8',
               border: 'none',
               borderRadius: '12px',
               cursor: 'pointer',
@@ -218,7 +385,7 @@ const AttributeManager: React.FC = () => {
           marginBottom: '24px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, color: '#667eea' }}>
+            <h3 style={{ margin: 0, color: '#29B5E8' }}>
               📋 Attribute Change Requests ({pendingRequests.filter(r => requestFilter === 'pending' ? r.STATUS === 'pending' || r.STATUS === 'more_info_needed' : true).length})
             </h3>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -226,9 +393,9 @@ const AttributeManager: React.FC = () => {
                 onClick={() => setRequestFilter('pending')}
                 style={{
                   padding: '8px 16px',
-                  backgroundColor: requestFilter === 'pending' ? '#667eea' : 'white',
-                  color: requestFilter === 'pending' ? 'white' : '#667eea',
-                  border: '2px solid #667eea',
+                  backgroundColor: requestFilter === 'pending' ? '#29B5E8' : 'white',
+                  color: requestFilter === 'pending' ? 'white' : '#29B5E8',
+                  border: '2px solid #29B5E8',
                   borderRadius: '8px',
                   cursor: 'pointer',
                   fontSize: '0.9em',
@@ -242,9 +409,9 @@ const AttributeManager: React.FC = () => {
                 onClick={() => setRequestFilter('all')}
                 style={{
                   padding: '8px 16px',
-                  backgroundColor: requestFilter === 'all' ? '#667eea' : 'white',
-                  color: requestFilter === 'all' ? 'white' : '#667eea',
-                  border: '2px solid #667eea',
+                  backgroundColor: requestFilter === 'all' ? '#29B5E8' : 'white',
+                  color: requestFilter === 'all' ? 'white' : '#29B5E8',
+                  border: '2px solid #29B5E8',
                   borderRadius: '8px',
                   cursor: 'pointer',
                   fontSize: '0.9em',
@@ -334,6 +501,9 @@ const AttributeManager: React.FC = () => {
                     <div style={{ fontSize: '0.8em', color: '#6c757d', marginTop: '8px' }}>
                       Requested by {request.REQUESTER} on {new Date(request.REQUESTED_AT).toLocaleString()}
                     </div>
+                    
+                    {/* Workflow Timeline */}
+                    {getWorkflowTimeline(request)}
                   </div>
                 );
               })}
@@ -350,7 +520,7 @@ const AttributeManager: React.FC = () => {
           padding: '24px',
           marginBottom: '24px'
         }}>
-          <h3 style={{ margin: '0 0 16px 0', color: '#667eea' }}>Request New Attribute</h3>
+          <h3 style={{ margin: '0 0 16px 0', color: '#29B5E8' }}>Request New Attribute</h3>
           <div style={{ display: 'grid', gap: '16px' }}>
             <div>
               <label style={{ display: 'block', fontWeight: '600', marginBottom: '6px', fontSize: '0.9em' }}>
@@ -413,7 +583,7 @@ const AttributeManager: React.FC = () => {
               <div style={{
                 padding: '12px',
                 backgroundColor: '#e7f3ff',
-                border: '2px solid #667eea',
+                border: '2px solid #29B5E8',
                 borderRadius: '8px',
                 marginBottom: '12px',
                 fontSize: '0.85em'
@@ -481,7 +651,7 @@ const AttributeManager: React.FC = () => {
                 const just = justElem?.value.trim() || '';
                 
                 if (!name || !display || !desc || !just) {
-                  alert('Please fill in all required fields');
+                  showMessage('Missing Fields', 'Please fill in all required fields', 'error');
                   return;
                 }
                 
@@ -515,7 +685,7 @@ const AttributeManager: React.FC = () => {
                   });
                   const result = await response.json();
                   if (result.success) {
-                    alert('Attribute creation request submitted for approval!');
+                    showMessage('Success', 'Attribute creation request submitted for approval!', 'success');
                     setShowCreateForm(false);
                     // Clear form
                     if (nameElem) nameElem.value = '';
@@ -524,10 +694,10 @@ const AttributeManager: React.FC = () => {
                     if (valuesElem) valuesElem.value = '';
                     if (justElem) justElem.value = '';
                   } else {
-                    alert('Failed to submit request: ' + result.error);
+                    showMessage('Error', 'Failed to submit request: ' + result.error, 'error');
                   }
                 } catch (err) {
-                  alert('Failed to submit attribute request');
+                  showMessage('Error', 'Failed to submit attribute request', 'error');
                 }
               }}
               style={{
@@ -582,14 +752,14 @@ const AttributeManager: React.FC = () => {
                   style={{ 
                     padding: '12px',
                     backgroundColor: selectedAttribute?.ATTRIBUTE_NAME === attr.ATTRIBUTE_NAME 
-                      ? '#667eea' 
+                      ? '#29B5E8' 
                       : 'white',
                     color: selectedAttribute?.ATTRIBUTE_NAME === attr.ATTRIBUTE_NAME 
                       ? 'white' 
                       : '#212529',
                     border: '2px solid',
                     borderColor: selectedAttribute?.ATTRIBUTE_NAME === attr.ATTRIBUTE_NAME 
-                      ? '#667eea' 
+                      ? '#29B5E8' 
                       : '#e9ecef',
                     borderRadius: '12px',
                     cursor: 'pointer',
@@ -601,7 +771,7 @@ const AttributeManager: React.FC = () => {
                   }}
                   onMouseOver={(e) => {
                     if (selectedAttribute?.ATTRIBUTE_NAME !== attr.ATTRIBUTE_NAME) {
-                      e.currentTarget.style.borderColor = '#667eea';
+                      e.currentTarget.style.borderColor = '#29B5E8';
                       e.currentTarget.style.backgroundColor = '#f8f9fa';
                     }
                   }}
@@ -636,51 +806,20 @@ const AttributeManager: React.FC = () => {
               <div>
                 <div style={{ marginBottom: '24px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.3em', color: '#667eea' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.3em', color: '#29B5E8' }}>
                       {selectedAttribute.DISPLAY_NAME}
                     </h3>
                     <button
                       onClick={() => {
-                        const justification = prompt('Why are you requesting a change to this attribute?');
-                        if (!justification || !justification.trim()) return;
-                        
-                        const newDescription = prompt('Enter new description:', selectedAttribute.DESCRIPTION);
-                        if (!newDescription || !newDescription.trim()) return;
-                        
-                        fetch('/api/change-requests', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            request_type: 'ATTRIBUTE_EDIT',
-                            target_object: selectedAttribute.ATTRIBUTE_NAME,
-                            justification: justification,
-                            proposed_change: {
-                              description: newDescription,
-                              display_name: selectedAttribute.DISPLAY_NAME
-                            },
-                            current_value: {
-                              description: selectedAttribute.DESCRIPTION,
-                              display_name: selectedAttribute.DISPLAY_NAME
-                            }
-                          })
-                        })
-                        .then(res => res.json())
-                        .then(result => {
-                          if (result.success) {
-                            alert('Change request submitted for approval!');
-                            fetchPendingRequests();
-                          } else {
-                            alert('Failed to submit request: ' + result.error);
-                          }
-                        })
-                        .catch(err => {
-                          alert('Failed to submit request');
-                          console.error(err);
+                        setChangeRequestData({
+                          justification: '',
+                          newDescription: selectedAttribute.DESCRIPTION || ''
                         });
+                        setShowChangeRequestModal(true);
                       }}
                       style={{
                         padding: '8px 16px',
-                        backgroundColor: '#667eea',
+                        backgroundColor: '#29B5E8',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
@@ -742,7 +881,7 @@ const AttributeManager: React.FC = () => {
                             position: 'absolute',
                             top: '12px',
                             right: '12px',
-                            backgroundColor: '#667eea',
+                            backgroundColor: '#29B5E8',
                             color: 'white',
                             padding: '4px 8px',
                             borderRadius: '12px',
@@ -755,7 +894,7 @@ const AttributeManager: React.FC = () => {
                           <div style={{ 
                             fontWeight: '600', 
                             fontSize: '1.05em',
-                            color: '#667eea',
+                            color: '#29B5E8',
                             marginBottom: '8px',
                             paddingRight: '60px'
                           }}>
@@ -802,7 +941,152 @@ const AttributeManager: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Change Request Modal */}
+      {showChangeRequestModal && selectedAttribute && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '32px',
+            maxWidth: '600px',
+            width: '90%',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+          }}>
+            <h2 style={{ marginTop: 0, color: '#29B5E8' }}>Request Change to Attribute</h2>
+            <p style={{ color: '#6c757d', marginBottom: '24px' }}>
+              Requesting change to <strong>{selectedAttribute.DISPLAY_NAME}</strong>
+            </p>
+            
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#212529' }}>
+                Justification *
+              </label>
+              <textarea
+                value={changeRequestData.justification}
+                onChange={(e) => setChangeRequestData({...changeRequestData, justification: e.target.value})}
+                placeholder="Why are you requesting this change?"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '2px solid #e9ecef',
+                  fontSize: '0.95em',
+                  minHeight: '80px',
+                  fontFamily: 'inherit'
+                }}
+              />
+            </div>
+            
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#212529' }}>
+                New Description *
+              </label>
+              <textarea
+                value={changeRequestData.newDescription}
+                onChange={(e) => setChangeRequestData({...changeRequestData, newDescription: e.target.value})}
+                placeholder="Enter the new description"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '2px solid #e9ecef',
+                  fontSize: '0.95em',
+                  minHeight: '100px',
+                  fontFamily: 'inherit'
+                }}
+              />
+            </div>
+            
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowChangeRequestModal(false);
+                  setChangeRequestData({ justification: '', newDescription: '' });
+                }}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: 'white',
+                  color: '#6c757d',
+                  border: '2px solid #e9ecef',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.95em'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!changeRequestData.justification.trim() || !changeRequestData.newDescription.trim()) {
+                    showMessage('Error', 'Please fill in all required fields', 'error');
+                    return;
+                  }
+                  
+                  fetch('/api/change-requests', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      requestType: 'ATTRIBUTE_EDIT',
+                      targetObject: selectedAttribute.ATTRIBUTE_NAME,
+                      justification: changeRequestData.justification,
+                      proposedChange: {
+                        description: changeRequestData.newDescription,
+                        display_name: selectedAttribute.DISPLAY_NAME
+                      },
+                      currentValue: {
+                        description: selectedAttribute.DESCRIPTION,
+                        display_name: selectedAttribute.DISPLAY_NAME
+                      }
+                    })
+                  })
+                  .then(res => res.json())
+                  .then(result => {
+                    if (result.success) {
+                      showMessage('Success', 'Change request submitted for approval!', 'success');
+                      fetchPendingRequests();
+                      setShowChangeRequestModal(false);
+                      setChangeRequestData({ justification: '', newDescription: '' });
+                    } else {
+                      showMessage('Error', 'Failed to submit request: ' + result.error, 'error');
+                    }
+                  })
+                  .catch(err => {
+                    showMessage('Error', 'Failed to submit request', 'error');
+                    console.error(err);
+                  });
+                }}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#29B5E8',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.95em'
+                }}
+              >
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 };
 

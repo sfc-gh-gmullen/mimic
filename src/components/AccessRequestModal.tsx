@@ -27,7 +27,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
   });
 
   const handleSubmit = async () => {
-    if (!justification.trim() || !accessStartDate || !accessEndDate || !grantToName.trim()) {
+    if (!justification.trim() || !grantToName.trim()) {
       setModalState({
         isOpen: true,
         title: 'Validation Error',
@@ -37,17 +37,19 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
       return;
     }
 
-    // Validate dates
-    const start = new Date(accessStartDate);
-    const end = new Date(accessEndDate);
-    if (end <= start) {
-      setModalState({
-        isOpen: true,
-        title: 'Validation Error',
-        message: 'End date must be after start date',
-        type: 'error'
-      });
-      return;
+    // Validate dates only if both are provided
+    if (accessStartDate && accessEndDate) {
+      const start = new Date(accessStartDate);
+      const end = new Date(accessEndDate);
+      if (end <= start) {
+        setModalState({
+          isOpen: true,
+          title: 'Validation Error',
+          message: 'End date must be after start date',
+          type: 'error'
+        });
+        return;
+      }
     }
 
     setLoading(true);
@@ -108,7 +110,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
       >
         <div 
           style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            background: 'linear-gradient(135deg, #29B5E8 0%, #11567F 100%)',
             borderRadius: '20px',
             padding: '2px',
             maxWidth: '600px',
@@ -126,7 +128,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
               <>
                 <h2 style={{ 
                   marginTop: 0, 
-                  color: '#667eea',
+                  color: '#29B5E8',
                   fontSize: '1.75em',
                   marginBottom: '8px'
                 }}>
@@ -139,7 +141,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                   paddingBottom: '16px',
                   borderBottom: '2px solid #f0f0f0'
                 }}>
-                  Request access to: <strong style={{ color: '#667eea' }}>{tableName}</strong>
+                  Request access to: <strong style={{ color: '#29B5E8' }}>{tableName}</strong>
                 </p>
 
                 <div style={{ marginBottom: '20px' }}>
@@ -168,7 +170,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       outline: 'none'
                     }}
                     disabled={loading}
-                    onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                    onFocus={(e) => e.target.style.borderColor = '#29B5E8'}
                     onBlur={(e) => e.target.style.borderColor = '#e9ecef'}
                   />
                 </div>
@@ -187,7 +189,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       fontSize: '0.9em',
                       color: '#495057'
                     }}>
-                      📅 Start Date *
+                      📅 Start Date <span style={{ fontWeight: 'normal', color: '#6c757d' }}>(optional)</span>
                     </label>
                     <input
                       type="date"
@@ -203,7 +205,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                         outline: 'none'
                       }}
                       disabled={loading}
-                      onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                      onFocus={(e) => e.target.style.borderColor = '#29B5E8'}
                       onBlur={(e) => e.target.style.borderColor = '#e9ecef'}
                     />
                   </div>
@@ -215,7 +217,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       fontSize: '0.9em',
                       color: '#495057'
                     }}>
-                      📅 End Date *
+                      📅 End Date <span style={{ fontWeight: 'normal', color: '#6c757d' }}>(optional)</span>
                     </label>
                     <input
                       type="date"
@@ -231,7 +233,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                         outline: 'none'
                       }}
                       disabled={loading}
-                      onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                      onFocus={(e) => e.target.style.borderColor = '#29B5E8'}
                       onBlur={(e) => e.target.style.borderColor = '#e9ecef'}
                     />
                   </div>
@@ -254,9 +256,9 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       style={{
                         flex: 1,
                         padding: '12px',
-                        backgroundColor: accessType === 'ROLE' ? '#667eea' : 'white',
-                        color: accessType === 'ROLE' ? 'white' : '#667eea',
-                        border: '2px solid #667eea',
+                        backgroundColor: accessType === 'ROLE' ? '#29B5E8' : 'white',
+                        color: accessType === 'ROLE' ? 'white' : '#29B5E8',
+                        border: '2px solid #29B5E8',
                         borderRadius: '12px',
                         cursor: 'pointer',
                         fontWeight: '600',
@@ -273,9 +275,9 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       style={{
                         flex: 1,
                         padding: '12px',
-                        backgroundColor: accessType === 'USER' ? '#667eea' : 'white',
-                        color: accessType === 'USER' ? 'white' : '#667eea',
-                        border: '2px solid #667eea',
+                        backgroundColor: accessType === 'USER' ? '#29B5E8' : 'white',
+                        color: accessType === 'USER' ? 'white' : '#29B5E8',
+                        border: '2px solid #29B5E8',
                         borderRadius: '12px',
                         cursor: 'pointer',
                         fontWeight: '600',
@@ -314,7 +316,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                       outline: 'none'
                     }}
                     disabled={loading}
-                    onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                    onFocus={(e) => e.target.style.borderColor = '#29B5E8'}
                     onBlur={(e) => e.target.style.borderColor = '#e9ecef'}
                   />
                   <div style={{ fontSize: '0.85em', color: '#6c757d', marginTop: '6px' }}>
@@ -358,17 +360,17 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                   </button>
                   <button
                     onClick={handleSubmit}
-                    disabled={loading || !justification.trim() || !accessStartDate || !accessEndDate || !grantToName.trim()}
+                    disabled={loading || !justification.trim() || !grantToName.trim()}
                     style={{
                       padding: '12px 24px',
-                      backgroundColor: '#667eea',
+                      backgroundColor: '#29B5E8',
                       color: 'white',
                       border: 'none',
                       borderRadius: '12px',
-                      cursor: (loading || !justification.trim() || !accessStartDate || !accessEndDate || !grantToName.trim()) ? 'not-allowed' : 'pointer',
+                      cursor: (loading || !justification.trim() || !grantToName.trim()) ? 'not-allowed' : 'pointer',
                       fontSize: '0.95em',
                       fontWeight: '600',
-                      opacity: (loading || !justification.trim() || !accessStartDate || !accessEndDate || !grantToName.trim()) ? 0.6 : 1,
+                      opacity: (loading || !justification.trim() || !grantToName.trim()) ? 0.6 : 1,
                       transition: 'all 0.2s',
                       boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)'
                     }}
@@ -396,7 +398,11 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                   }}>
                     <div style={{ fontSize: '0.9em', color: '#155724' }}>
                       <strong>Access Details:</strong><br/>
-                      📅 {new Date(accessStartDate).toLocaleDateString()} - {new Date(accessEndDate).toLocaleDateString()}<br/>
+                      {accessStartDate && accessEndDate ? (
+                        <>📅 {new Date(accessStartDate).toLocaleDateString()} - {new Date(accessEndDate).toLocaleDateString()}<br/></>
+                      ) : (
+                        <>📅 No date restrictions specified<br/></>
+                      )}
                       {accessType === 'ROLE' ? '👥' : '👤'} {grantToName}
                     </div>
                   </div>
@@ -405,7 +411,7 @@ const AccessRequestModal: React.FC<AccessRequestModalProps> = ({ tableName, onCl
                     style={{
                       marginTop: '8px',
                       padding: '12px 32px',
-                      backgroundColor: '#667eea',
+                      backgroundColor: '#29B5E8',
                       color: 'white',
                       border: 'none',
                       borderRadius: '12px',

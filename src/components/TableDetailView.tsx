@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import AccessRequestModal from './AccessRequestModal';
 import Modal from './Modal';
+import LineageGraph from './LineageGraph';
+import DataPreview from './DataPreview';
+import { useTheme } from '../ThemeContext';
 
 interface TableDetailProps {
   table: {
@@ -44,15 +47,23 @@ interface Tag {
 }
 
 interface LineageNode {
-  LINEAGE_ID: string;
   SOURCE_TABLE: string;
+  SOURCE_DATABASE: string;
+  SOURCE_SCHEMA: string;
+  SOURCE_NAME: string;
+  SOURCE_DOMAIN: string;
   TARGET_TABLE: string;
-  LINEAGE_TYPE: string;
-  DISCOVERED_AT: string;
+  TARGET_DATABASE: string;
+  TARGET_SCHEMA: string;
+  TARGET_NAME: string;
+  TARGET_DOMAIN: string;
+  LINEAGE_TYPE: 'UPSTREAM' | 'DOWNSTREAM';
+  DISTANCE: number;
 }
 
 const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
-  const [activeTab, setActiveTab] = useState<'metadata' | 'schema' | 'activity' | 'lineage'>('metadata');
+  const { colors, isDarkMode } = useTheme();
+  const [activeTab, setActiveTab] = useState<'metadata' | 'schema' | 'preview' | 'activity' | 'lineage'>('metadata');
   const [columns, setColumns] = useState<Column[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -90,6 +101,14 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
     type: 'info'
   });
   const [modalInput, setModalInput] = useState('');
+  
+  // Data Product state
+  const [currentDataProduct, setCurrentDataProduct] = useState<string | null>(null);
+  const [availableDataProducts, setAvailableDataProducts] = useState<string[]>([]);
+  const [selectedDataProduct, setSelectedDataProduct] = useState('');
+  const [newDataProductName, setNewDataProductName] = useState('');
+  const [showDataProductDropdown, setShowDataProductDropdown] = useState(false);
+  const [dataProductLoading, setDataProductLoading] = useState(false);
 
   // Modal helper functions
   const showMessage = (title: string, message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
@@ -129,6 +148,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
     fetchColumnAttributes();
     fetchAllAttributes();
     fetchContacts();
+    fetchCurrentDataProduct();
+    fetchAvailableDataProducts();
     trackPopularity();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -239,6 +260,95 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
       }
     } catch (err) {
       console.error('Failed to fetch all attributes:', err);
+    }
+  };
+
+  // Data Product fetch functions
+  const fetchCurrentDataProduct = async () => {
+    try {
+      const response = await fetch(`/api/tables/${table.DATABASE_NAME}/${table.SCHEMA_NAME}/${table.TABLE_NAME}/data-product`);
+      const result = await response.json();
+      if (result.success && result.data) {
+        setCurrentDataProduct(result.data.dataProduct);
+        setSelectedDataProduct(result.data.dataProduct || '');
+      }
+    } catch (err) {
+      console.error('Failed to fetch current data product:', err);
+    }
+  };
+
+  const fetchAvailableDataProducts = async () => {
+    try {
+      const response = await fetch('/api/data-products');
+      const result = await response.json();
+      if (result.success) {
+        setAvailableDataProducts(result.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch available data products:', err);
+    }
+  };
+
+  const handleSetDataProduct = async (productName: string, isNewProduct: boolean = false) => {
+    if (!productName.trim()) return;
+    
+    setDataProductLoading(true);
+    try {
+      const response = await fetch(`/api/tables/${table.DATABASE_NAME}/${table.SCHEMA_NAME}/${table.TABLE_NAME}/data-product`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataProduct: productName.trim() })
+      });
+      const result = await response.json();
+      if (result.success) {
+        const trimmedName = productName.trim();
+        setCurrentDataProduct(trimmedName);
+        setNewDataProductName('');
+        
+        // For new products, immediately add to local state (Snowflake metadata may take time to update)
+        if (isNewProduct && !availableDataProducts.includes(trimmedName)) {
+          setAvailableDataProducts(prev => [...prev, trimmedName].sort());
+        }
+        
+        // Also refresh from API (may get additional products from other sources)
+        await fetchAvailableDataProducts();
+        setSelectedDataProduct(trimmedName);
+        
+        if (isNewProduct) {
+          // For new products, keep dropdown open so user can see it was added
+          showMessage('Success', `Created "${trimmedName}" and assigned to this ${table.TABLE_TYPE === 'BASE TABLE' ? 'table' : 'view'}. The new Data Product is now available for other tables.`, 'success');
+        } else {
+          setShowDataProductDropdown(false);
+          showMessage('Success', result.message, 'success');
+        }
+      } else {
+        showMessage('Error', result.error || 'Failed to set Data Product', 'error');
+      }
+    } catch (err) {
+      showMessage('Error', 'Failed to set Data Product', 'error');
+    } finally {
+      setDataProductLoading(false);
+    }
+  };
+
+  const handleRemoveDataProduct = async () => {
+    setDataProductLoading(true);
+    try {
+      const response = await fetch(`/api/tables/${table.DATABASE_NAME}/${table.SCHEMA_NAME}/${table.TABLE_NAME}/data-product`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+      if (result.success) {
+        setCurrentDataProduct(null);
+        setSelectedDataProduct('');
+        showMessage('Success', result.message, 'success');
+      } else {
+        showMessage('Error', result.error || 'Failed to remove Data Product', 'error');
+      }
+    } catch (err) {
+      showMessage('Error', 'Failed to remove Data Product', 'error');
+    } finally {
+      setDataProductLoading(false);
     }
   };
 
@@ -472,15 +582,15 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', maxWidth: '100%', width: '100%' }}>
+    <div style={{ background: colors.surface, borderRadius: '8px', padding: '20px', boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)', maxWidth: '100%', width: '100%' }}>
       {/* Header */}
       <div style={{ marginBottom: '20px' }}>
         <button 
           onClick={onBack}
           style={{ 
             padding: '8px 16px', 
-            backgroundColor: '#6c757d', 
-            color: 'white', 
+            backgroundColor: colors.primary, 
+            color: colors.primaryText, 
             border: 'none', 
             borderRadius: '4px', 
             cursor: 'pointer',
@@ -492,8 +602,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ flex: 1, minWidth: '300px' }}>
-            <h2 style={{ margin: '0 0 8px 0' }}>{table.TABLE_NAME}</h2>
-            <div style={{ color: '#6c757d', fontSize: '0.9em' }}>
+            <h2 style={{ margin: '0 0 8px 0', color: colors.text }}>{table.TABLE_NAME}</h2>
+            <div style={{ color: colors.textMuted, fontSize: '0.9em' }}>
               {table.DATABASE_NAME}.{table.SCHEMA_NAME}
             </div>
           </div>
@@ -504,15 +614,15 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
               flex: 1,
               minWidth: '250px',
               padding: '12px',
-              backgroundColor: '#f8f9fa',
+              backgroundColor: colors.cardBg,
               borderRadius: '8px',
-              border: '1px solid #dee2e6'
+              border: `1px solid ${colors.border}`
             }}>
-              <div style={{ fontWeight: '600', fontSize: '0.9em', marginBottom: '8px', color: '#495057' }}>
+              <div style={{ fontWeight: '600', fontSize: '0.9em', marginBottom: '8px', color: colors.textSecondary }}>
                 📞 Table Contacts
               </div>
               {contacts.map((contact, idx) => (
-                <div key={idx} style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '4px' }}>
+                <div key={idx} style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>
                   <strong>{contact.PURPOSE}:</strong> {contact.METHOD}
                   {contact.INHERITED && <span style={{ fontStyle: 'italic' }}> (inherited)</span>}
                 </div>
@@ -524,8 +634,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
             onClick={() => setShowAccessModal(true)}
             style={{ 
               padding: '8px 16px', 
-              backgroundColor: '#007bff', 
-              color: 'white', 
+              backgroundColor: colors.primary, 
+              color: colors.primaryText, 
               border: 'none', 
               borderRadius: '4px', 
               cursor: 'pointer',
@@ -540,10 +650,10 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
       {/* Tabs */}
       <div style={{ 
         display: 'flex', 
-        borderBottom: '2px solid #e9ecef',
+        borderBottom: `2px solid ${colors.border}`,
         marginBottom: '20px'
       }}>
-        {(['metadata', 'schema', 'lineage', 'activity'] as const).map(tab => (
+        {(['metadata', 'schema', 'preview', 'lineage', 'activity'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -552,14 +662,15 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
               border: 'none',
               background: 'none',
               cursor: 'pointer',
-              borderBottom: activeTab === tab ? '2px solid #007bff' : 'none',
-              color: activeTab === tab ? '#007bff' : '#6c757d',
+              borderBottom: activeTab === tab ? `2px solid ${colors.primary}` : 'none',
+              color: activeTab === tab ? colors.primary : colors.textMuted,
               fontWeight: activeTab === tab ? '600' : 'normal',
               marginBottom: '-2px'
             }}
           >
             {tab === 'metadata' && '📊 Metadata'}
             {tab === 'schema' && '📋 Schema & Glossary'}
+            {tab === 'preview' && '👁️ Data Preview'}
             {tab === 'lineage' && '🔗 Lineage'}
             {tab === 'activity' && '💬 Activity'}
           </button>
@@ -575,36 +686,234 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
             gap: '20px',
             marginBottom: '30px'
           }}>
-            <div style={{ padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
-              <div style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '4px' }}>Type</div>
-              <div style={{ fontSize: '1.1em', fontWeight: '600' }}>
+            <div style={{ padding: '15px', backgroundColor: colors.cardBg, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+              <div style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>Type</div>
+              <div style={{ fontSize: '1.1em', fontWeight: '600', color: colors.text }}>
                 {table.TABLE_TYPE === 'BASE TABLE' ? 'Table' : 'View'}
               </div>
             </div>
-            <div style={{ padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
-              <div style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '4px' }}>Row Count</div>
-              <div style={{ fontSize: '1.1em', fontWeight: '600' }}>
+            <div style={{ padding: '15px', backgroundColor: colors.cardBg, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+              <div style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>Row Count</div>
+              <div style={{ fontSize: '1.1em', fontWeight: '600', color: colors.text }}>
                 {table.ROW_COUNT?.toLocaleString() || 'N/A'}
               </div>
             </div>
-            <div style={{ padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
-              <div style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '4px' }}>Size</div>
-              <div style={{ fontSize: '1.1em', fontWeight: '600' }}>
+            <div style={{ padding: '15px', backgroundColor: colors.cardBg, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+              <div style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>Size</div>
+              <div style={{ fontSize: '1.1em', fontWeight: '600', color: colors.text }}>
                 {table.SIZE_GB ? `${table.SIZE_GB} GB` : 'N/A'}
               </div>
             </div>
-            <div style={{ padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
-              <div style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '4px' }}>Last Modified</div>
-              <div style={{ fontSize: '1.1em', fontWeight: '600' }}>
+            <div style={{ padding: '15px', backgroundColor: colors.cardBg, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+              <div style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>Last Modified</div>
+              <div style={{ fontSize: '1.1em', fontWeight: '600', color: colors.text }}>
                 {table.LAST_ALTERED ? new Date(table.LAST_ALTERED).toLocaleDateString() : 'N/A'}
               </div>
             </div>
           </div>
 
+          {/* Data Product Section */}
+          <div style={{ 
+            marginBottom: '24px', 
+            padding: '20px', 
+            backgroundColor: colors.surface,
+            borderRadius: '8px',
+            border: `2px solid ${colors.border}`
+          }}>
+            <label style={{ fontSize: '0.85em', fontWeight: '600', color: colors.textSecondary, display: 'block', marginBottom: '12px' }}>
+              📦 Data Product
+            </label>
+            
+            {currentDataProduct && !showDataProductDropdown ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span style={{
+                  padding: '8px 16px',
+                  backgroundColor: colors.primary,
+                  color: colors.primaryText,
+                  borderRadius: '20px',
+                  fontWeight: '600',
+                  fontSize: '0.95em'
+                }}>
+                  {currentDataProduct}
+                </span>
+                <button
+                  onClick={() => setShowDataProductDropdown(true)}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'transparent',
+                    color: colors.primary,
+                    border: `1px solid ${colors.primary}`,
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.85em'
+                  }}
+                >
+                  Change
+                </button>
+                <button
+                  onClick={handleRemoveDataProduct}
+                  disabled={dataProductLoading}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'transparent',
+                    color: colors.error,
+                    border: `1px solid ${colors.error}`,
+                    borderRadius: '4px',
+                    cursor: dataProductLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.85em',
+                    opacity: dataProductLoading ? 0.6 : 1
+                  }}
+                >
+                  {dataProductLoading ? 'Removing...' : 'Remove'}
+                </button>
+              </div>
+            ) : !showDataProductDropdown ? (
+              <div>
+                <p style={{ color: colors.textMuted, marginBottom: '12px', fontSize: '0.9em' }}>
+                  This {table.TABLE_TYPE === 'BASE TABLE' ? 'table' : 'view'} is not assigned to a Data Product.
+                </p>
+                <button
+                  onClick={() => setShowDataProductDropdown(true)}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: colors.primary,
+                    color: colors.primaryText,
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  + Add to Data Product
+                </button>
+              </div>
+            ) : null}
+
+            {/* Data Product Dropdown/Modal */}
+            {showDataProductDropdown && (
+              <div style={{
+                padding: '16px',
+                backgroundColor: colors.cardBg,
+                borderRadius: '8px',
+                border: `2px solid ${colors.primary}`,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+              }}>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', fontSize: '0.9em', color: colors.textSecondary }}>
+                    Select Existing Data Product
+                  </label>
+                  <select
+                    value={selectedDataProduct}
+                    onChange={(e) => setSelectedDataProduct(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: `2px solid ${colors.inputBorder}`,
+                      backgroundColor: colors.inputBg,
+                      color: selectedDataProduct ? colors.text : colors.textMuted,
+                      fontSize: '0.95em',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="">-- Select a Data Product --</option>
+                    {availableDataProducts.map(dp => (
+                      <option key={dp} value={dp}>{dp}</option>
+                    ))}
+                  </select>
+                  {selectedDataProduct && selectedDataProduct !== currentDataProduct && (
+                    <button
+                      onClick={() => handleSetDataProduct(selectedDataProduct)}
+                      disabled={dataProductLoading}
+                      style={{
+                        marginTop: '8px',
+                        padding: '8px 16px',
+                        backgroundColor: colors.success,
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: dataProductLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '0.9em',
+                        fontWeight: '600',
+                        opacity: dataProductLoading ? 0.6 : 1
+                      }}
+                    >
+                      {dataProductLoading ? 'Saving...' : 'Apply'}
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ 
+                  borderTop: `1px solid ${colors.border}`, 
+                  paddingTop: '16px',
+                  marginTop: '16px'
+                }}>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', fontSize: '0.9em', color: colors.textSecondary }}>
+                    Or Create New Data Product
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="text"
+                      value={newDataProductName}
+                      onChange={(e) => setNewDataProductName(e.target.value)}
+                      placeholder="Enter new Data Product name..."
+                      style={{
+                        flex: 1,
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: `2px solid ${colors.inputBorder}`,
+                        backgroundColor: colors.inputBg,
+                        color: colors.text,
+                        fontSize: '0.95em'
+                      }}
+                    />
+                    <button
+                      onClick={() => handleSetDataProduct(newDataProductName, true)}
+                      disabled={dataProductLoading || !newDataProductName.trim()}
+                      style={{
+                        padding: '10px 16px',
+                        backgroundColor: newDataProductName.trim() ? colors.primary : colors.inputBorder,
+                        color: colors.primaryText,
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: (dataProductLoading || !newDataProductName.trim()) ? 'not-allowed' : 'pointer',
+                        fontWeight: '600',
+                        opacity: (dataProductLoading || !newDataProductName.trim()) ? 0.6 : 1
+                      }}
+                    >
+                      Create & Add
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => {
+                      setShowDataProductDropdown(false);
+                      setNewDataProductName('');
+                      setSelectedDataProduct(currentDataProduct || '');
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: 'transparent',
+                      color: colors.textMuted,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '0.85em'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {table.SYSTEM_COMMENT && (
             <div style={{ marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '1em', marginBottom: '8px' }}>System Description</h3>
-              <div style={{ padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
+              <h3 style={{ fontSize: '1em', marginBottom: '8px', color: colors.text }}>System Description</h3>
+              <div style={{ padding: '12px', backgroundColor: colors.cardBg, borderRadius: '4px', border: `1px solid ${colors.border}`, color: colors.text }}>
                 {table.SYSTEM_COMMENT}
               </div>
             </div>
@@ -612,14 +921,14 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
 
           <div style={{ marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <h3 style={{ fontSize: '1em', margin: 0 }}>User Description</h3>
+              <h3 style={{ fontSize: '1em', margin: 0, color: colors.text }}>User Description</h3>
               {!isEditingDescription && (
                 <button 
                   onClick={() => setIsEditingDescription(true)}
                   style={{ 
                     padding: '4px 12px', 
-                    backgroundColor: '#007bff', 
-                    color: 'white', 
+                    backgroundColor: colors.primary, 
+                    color: colors.primaryText, 
                     border: 'none', 
                     borderRadius: '4px', 
                     cursor: 'pointer',
@@ -639,10 +948,12 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     width: '100%', 
                     minHeight: '100px', 
                     padding: '12px', 
-                    border: '1px solid #ced4da',
+                    border: `1px solid ${colors.inputBorder}`,
                     borderRadius: '4px',
                     fontSize: '0.9em',
-                    marginBottom: '8px'
+                    marginBottom: '8px',
+                    backgroundColor: colors.inputBg,
+                    color: colors.text
                   }}
                   placeholder="Add a description for this table..."
                 />
@@ -653,9 +964,11 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                   style={{ 
                     width: '100%', 
                     padding: '8px 12px', 
-                    border: '1px solid #ced4da',
+                    border: `1px solid ${colors.inputBorder}`,
                     borderRadius: '4px',
-                    fontSize: '0.9em'
+                    fontSize: '0.9em',
+                    backgroundColor: colors.inputBg,
+                    color: colors.text
                   }}
                   placeholder="Justification for this change (required)..."
                 />
@@ -665,7 +978,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     disabled={loading}
                     style={{ 
                       padding: '8px 16px', 
-                      backgroundColor: '#28a745', 
+                      backgroundColor: colors.success, 
                       color: 'white', 
                       border: 'none', 
                       borderRadius: '4px', 
@@ -682,9 +995,9 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     }}
                     style={{ 
                       padding: '8px 16px', 
-                      backgroundColor: '#6c757d', 
-                      color: 'white', 
-                      border: 'none', 
+                      backgroundColor: 'transparent', 
+                      color: colors.textMuted, 
+                      border: `1px solid ${colors.border}`, 
                       borderRadius: '4px', 
                       cursor: 'pointer'
                     }}
@@ -694,23 +1007,23 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 </div>
               </div>
             ) : (
-              <div style={{ padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
-                {description || <em style={{ color: '#6c757d' }}>No user description yet. Click Edit to add one.</em>}
+              <div style={{ padding: '12px', backgroundColor: colors.cardBg, borderRadius: '4px', border: `1px solid ${colors.border}`, color: colors.text }}>
+                {description || <em style={{ color: colors.textMuted }}>No user description yet. Click Edit to add one.</em>}
               </div>
             )}
           </div>
 
           {/* Tags Section */}
           <div style={{ marginTop: '20px' }}>
-            <h3 style={{ fontSize: '1em', marginBottom: '12px' }}>Tags</h3>
+            <h3 style={{ fontSize: '1em', marginBottom: '12px', color: colors.text }}>Tags</h3>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
               {tags.map(tag => (
                 <span 
                   key={tag.TAG_ID}
                   style={{ 
                     padding: '6px 12px',
-                    backgroundColor: '#e7f3ff',
-                    color: '#004085',
+                    backgroundColor: isDarkMode ? colors.primary + '30' : '#e7f3ff',
+                    color: colors.primary,
                     borderRadius: '16px',
                     fontSize: '0.85em',
                     display: 'flex',
@@ -724,7 +1037,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#004085',
+                      color: colors.primary,
                       cursor: 'pointer',
                       padding: '0',
                       fontSize: '1.2em',
@@ -737,7 +1050,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 </span>
               ))}
               {tags.length === 0 && (
-                <em style={{ color: '#6c757d', fontSize: '0.9em' }}>No tags yet</em>
+                <em style={{ color: colors.textMuted, fontSize: '0.9em' }}>No tags yet</em>
               )}
             </div>
             <div style={{ position: 'relative' }}>
@@ -759,9 +1072,11 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                   style={{ 
                     flex: 1,
                     padding: '8px 12px',
-                    border: '2px solid #ced4da',
+                    border: `2px solid ${colors.inputBorder}`,
                     borderRadius: '4px',
-                    fontSize: '0.9em'
+                    fontSize: '0.9em',
+                    backgroundColor: colors.inputBg,
+                    color: colors.text
                   }}
                 />
                 <button
@@ -769,8 +1084,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                   disabled={loading || !tagSearch.trim()}
                   style={{ 
                     padding: '8px 16px',
-                    backgroundColor: '#007bff',
-                    color: 'white',
+                    backgroundColor: colors.primary,
+                    color: colors.primaryText,
                     border: 'none',
                     borderRadius: '4px',
                     cursor: loading || !tagSearch.trim() ? 'not-allowed' : 'pointer',
@@ -789,8 +1104,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                   top: '100%',
                   left: 0,
                   right: '100px',
-                  backgroundColor: 'white',
-                  border: '2px solid #667eea',
+                  backgroundColor: colors.cardBg,
+                  border: `2px solid ${colors.primary}`,
                   borderRadius: '8px',
                   marginTop: '4px',
                   maxHeight: '200px',
@@ -808,15 +1123,16 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                       style={{
                         padding: '10px 12px',
                         cursor: 'pointer',
-                        borderBottom: idx < filteredAvailableTags.length - 1 ? '1px solid #f0f0f0' : 'none',
-                        transition: 'background-color 0.15s'
+                        borderBottom: idx < filteredAvailableTags.length - 1 ? `1px solid ${colors.border}` : 'none',
+                        transition: 'background-color 0.15s',
+                        backgroundColor: colors.cardBg
                       }}
-                      onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
-                      onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                      onMouseOver={(e) => e.currentTarget.style.backgroundColor = colors.surface}
+                      onMouseOut={(e) => e.currentTarget.style.backgroundColor = colors.cardBg}
                     >
-                      <div style={{ fontWeight: '500', color: '#212529' }}>🏷️ {tag.TAG_NAME}</div>
+                      <div style={{ fontWeight: '500', color: colors.text }}>🏷️ {tag.TAG_NAME}</div>
                       {tag.COUNT > 0 && (
-                        <div style={{ fontSize: '0.8em', color: '#6c757d', marginTop: '2px' }}>
+                        <div style={{ fontSize: '0.8em', color: colors.textMuted, marginTop: '2px' }}>
                           Used in {tag.COUNT} tables
                         </div>
                       )}
@@ -831,7 +1147,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
 
       {activeTab === 'schema' && (
         <div>
-          <h3 style={{ fontSize: '1em', marginBottom: '16px' }}>Columns & Business Glossary ({columns.length})</h3>
+          <h3 style={{ fontSize: '1em', marginBottom: '16px', color: colors.text }}>Columns & Business Glossary ({columns.length})</h3>
           <div style={{ display: 'grid', gap: '16px' }}>
             {columns.map(col => {
               const colAttrs = columnAttributes.filter(attr => attr.COLUMN_NAME === col.COLUMN_NAME);
@@ -841,23 +1157,23 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 <div 
                   key={col.COLUMN_NAME}
                   style={{ 
-                    border: '2px solid #e9ecef',
+                    border: `2px solid ${colors.border}`,
                     borderRadius: '12px',
                     padding: '16px',
-                    backgroundColor: colAttrs.length > 0 ? '#f8f9fa' : 'white'
+                    backgroundColor: colAttrs.length > 0 ? (isDarkMode ? colors.surface : '#f8f9fa') : colors.cardBg
                   }}
                 >
                   {/* Column Header */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
-                        <span style={{ fontWeight: '600', fontSize: '1.05em', color: '#212529' }}>
+                        <span style={{ fontWeight: '600', fontSize: '1.05em', color: colors.text }}>
                           {col.COLUMN_NAME}
                         </span>
                         <span style={{ 
                           padding: '2px 8px',
-                          backgroundColor: '#e7f3ff',
-                          color: '#004085',
+                          backgroundColor: isDarkMode ? colors.primary + '30' : '#e7f3ff',
+                          color: colors.primary,
                           borderRadius: '12px',
                           fontSize: '0.75em',
                           fontWeight: '600'
@@ -866,8 +1182,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                         </span>
                         <span style={{ 
                           padding: '2px 8px', 
-                          backgroundColor: col.IS_NULLABLE === 'YES' ? '#fff3cd' : '#d4edda',
-                          color: col.IS_NULLABLE === 'YES' ? '#856404' : '#155724',
+                          backgroundColor: col.IS_NULLABLE === 'YES' ? (isDarkMode ? '#856404' + '40' : '#fff3cd') : (isDarkMode ? '#155724' + '40' : '#d4edda'),
+                          color: col.IS_NULLABLE === 'YES' ? (isDarkMode ? '#ffc107' : '#856404') : (isDarkMode ? '#28a745' : '#155724'),
                           borderRadius: '12px',
                           fontSize: '0.75em',
                           fontWeight: '600'
@@ -878,7 +1194,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                       
                       {/* Column Description */}
                       <div style={{ marginTop: '8px' }}>
-                        <div style={{ fontSize: '0.85em', fontWeight: '600', color: '#6c757d', marginBottom: '4px' }}>
+                        <div style={{ fontSize: '0.85em', fontWeight: '600', color: colors.textMuted, marginBottom: '4px' }}>
                           Description:
                         </div>
                         {isEditingThisCol ? (
@@ -889,12 +1205,14 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                               style={{
                                 width: '100%',
                                 padding: '8px',
-                                border: '2px solid #667eea',
+                                border: `2px solid ${colors.primary}`,
                                 borderRadius: '8px',
                                 fontSize: '0.9em',
                                 minHeight: '80px',
                                 fontFamily: 'inherit',
-                                marginBottom: '8px'
+                                marginBottom: '8px',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
                               }}
                               id={`col-desc-${col.COLUMN_NAME}`}
                             />
@@ -904,10 +1222,12 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                               style={{
                                 width: '100%',
                                 padding: '8px',
-                                border: '1px solid #ced4da',
+                                border: `1px solid ${colors.inputBorder}`,
                                 borderRadius: '8px',
                                 fontSize: '0.85em',
-                                marginBottom: '8px'
+                                marginBottom: '8px',
+                                backgroundColor: colors.inputBg,
+                                color: colors.text
                               }}
                               id={`col-just-${col.COLUMN_NAME}`}
                             />
@@ -950,7 +1270,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                                 }}
                                 style={{
                                   padding: '6px 12px',
-                                  backgroundColor: '#28a745',
+                                  backgroundColor: colors.success,
                                   color: 'white',
                                   border: 'none',
                                   borderRadius: '8px',
@@ -965,9 +1285,9 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                                 onClick={() => setEditingColumnDesc(null)}
                                 style={{
                                   padding: '6px 12px',
-                                  backgroundColor: '#6c757d',
-                                  color: 'white',
-                                  border: 'none',
+                                  backgroundColor: 'transparent',
+                                  color: colors.textMuted,
+                                  border: `1px solid ${colors.border}`,
                                   borderRadius: '8px',
                                   cursor: 'pointer',
                                   fontSize: '0.85em'
@@ -979,15 +1299,15 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                           </div>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'start', gap: '8px' }}>
-                            <div style={{ flex: 1, fontSize: '0.9em', color: '#495057' }}>
-                              {col.COMMENT || <em style={{ color: '#6c757d' }}>No description</em>}
+                            <div style={{ flex: 1, fontSize: '0.9em', color: colors.textSecondary }}>
+                              {col.COMMENT || <em style={{ color: colors.textMuted }}>No description</em>}
                             </div>
                             <button
                               onClick={() => setEditingColumnDesc(col.COLUMN_NAME)}
                               style={{
                                 padding: '4px 8px',
-                                backgroundColor: '#667eea',
-                                color: 'white',
+                                backgroundColor: colors.primary,
+                                color: colors.primaryText,
                                 border: 'none',
                                 borderRadius: '6px',
                                 cursor: 'pointer',
@@ -1008,7 +1328,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     {/* Display linked attributes */}
                     {colAttrs.length > 0 && (
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '0.85em', fontWeight: '600', color: '#667eea', marginBottom: '8px' }}>
+                        <div style={{ fontSize: '0.85em', fontWeight: '600', color: colors.primary, marginBottom: '8px' }}>
                           🏷️ Business Glossary Attributes ({colAttrs.length}):
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1017,17 +1337,17 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                               key={attr.ATTRIBUTE_NAME}
                               style={{ 
                                 padding: '12px',
-                                backgroundColor: 'white',
+                                backgroundColor: colors.cardBg,
                                 borderRadius: '8px',
-                                border: '1px solid #667eea'
+                                border: `1px solid ${colors.primary}`
                               }}
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                                 <div style={{ flex: 1 }}>
-                                  <div style={{ fontWeight: '600', color: '#495057', marginBottom: '4px' }}>
+                                  <div style={{ fontWeight: '600', color: colors.textSecondary, marginBottom: '4px' }}>
                                     {attr.DISPLAY_NAME}
                                   </div>
-                                  <div style={{ fontSize: '0.85em', color: '#6c757d', marginBottom: '8px' }}>
+                                  <div style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '8px' }}>
                                     {attr.DESCRIPTION}
                                   </div>
                                   <button
@@ -1053,8 +1373,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                                     }}
                                     style={{
                                       padding: '4px 12px',
-                                      backgroundColor: '#667eea',
-                                      color: 'white',
+                                      backgroundColor: colors.primary,
+                                      color: colors.primaryText,
                                       border: 'none',
                                       borderRadius: '8px',
                                       cursor: 'pointer',
@@ -1071,7 +1391,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                                   title="Remove this attribute"
                                   style={{
                                     padding: '4px 8px',
-                                    backgroundColor: '#dc3545',
+                                    backgroundColor: colors.error,
                                     color: 'white',
                                     border: 'none',
                                     borderRadius: '6px',
@@ -1093,11 +1413,11 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     {linkingAttribute === col.COLUMN_NAME ? (
                       <div style={{
                         padding: '12px',
-                        backgroundColor: '#f8f9fa',
+                        backgroundColor: colors.cardBg,
                         borderRadius: '8px',
-                        border: '1px solid #dee2e6'
+                        border: `1px solid ${colors.border}`
                       }}>
-                        <div style={{ fontSize: '0.85em', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
+                        <div style={{ fontSize: '0.85em', fontWeight: '600', marginBottom: '8px', color: colors.textSecondary }}>
                           Link Business Glossary Attribute:
                         </div>
                         <select
@@ -1105,10 +1425,12 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                           style={{
                             width: '100%',
                             padding: '8px',
-                            border: '2px solid #667eea',
+                            border: `2px solid ${colors.primary}`,
                             borderRadius: '8px',
                             fontSize: '0.9em',
-                            marginBottom: '8px'
+                            marginBottom: '8px',
+                            backgroundColor: colors.inputBg,
+                            color: colors.text
                           }}
                         >
                           <option value="">-- Select an attribute --</option>
@@ -1134,7 +1456,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                             disabled={loading}
                             style={{
                               padding: '6px 12px',
-                              backgroundColor: '#28a745',
+                              backgroundColor: colors.success,
                               color: 'white',
                               border: 'none',
                               borderRadius: '8px',
@@ -1151,9 +1473,9 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                             disabled={loading}
                             style={{
                               padding: '6px 12px',
-                              backgroundColor: '#6c757d',
-                              color: 'white',
-                              border: 'none',
+                              backgroundColor: 'transparent',
+                              color: colors.textMuted,
+                              border: `1px solid ${colors.border}`,
                               borderRadius: '8px',
                               cursor: loading ? 'not-allowed' : 'pointer',
                               fontSize: '0.85em'
@@ -1168,8 +1490,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                         onClick={() => setLinkingAttribute(col.COLUMN_NAME)}
                         style={{
                           padding: '6px 12px',
-                          backgroundColor: '#667eea',
-                          color: 'white',
+                          backgroundColor: colors.primary,
+                          color: colors.primaryText,
                           border: 'none',
                           borderRadius: '8px',
                           cursor: 'pointer',
@@ -1188,101 +1510,35 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
         </div>
       )}
 
+      {activeTab === 'preview' && (
+        <div>
+          <h3 style={{ fontSize: '1em', marginBottom: '16px', color: colors.text }}>Data Preview</h3>
+          <DataPreview 
+            tableName={table.FULL_TABLE_NAME}
+            columns={columns.map(c => ({ COLUMN_NAME: c.COLUMN_NAME, DATA_TYPE: c.DATA_TYPE }))}
+          />
+        </div>
+      )}
+
       {activeTab === 'lineage' && (
         <div>
           <h3 style={{ fontSize: '1em', marginBottom: '16px' }}>Data Lineage</h3>
-          {lineage.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#6c757d' }}>
-              <div style={{ fontSize: '3em', marginBottom: '10px' }}>🔗</div>
-              <div>No lineage information available</div>
-              <div style={{ fontSize: '0.85em', marginTop: '8px' }}>
-                Lineage data is automatically discovered from query logs
-              </div>
-            </div>
-          ) : (
-            <div>
-              {/* Upstream Sources */}
-              <div style={{ marginBottom: '30px' }}>
-                <h4 style={{ fontSize: '0.95em', color: '#6c757d', marginBottom: '12px' }}>
-                  ⬅️ Upstream Sources ({lineage.filter(l => l.TARGET_TABLE === table.FULL_TABLE_NAME).length})
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {lineage.filter(l => l.TARGET_TABLE === table.FULL_TABLE_NAME).map(node => (
-                    <div 
-                      key={node.LINEAGE_ID}
-                      style={{ 
-                        padding: '12px',
-                        border: '1px solid #e9ecef',
-                        borderRadius: '4px',
-                        backgroundColor: '#f8f9fa'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '1.5em' }}>📊</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '500', color: '#007bff' }}>{node.SOURCE_TABLE}</div>
-                          <div style={{ fontSize: '0.85em', color: '#6c757d', marginTop: '4px' }}>
-                            Type: {node.LINEAGE_TYPE} • Discovered: {new Date(node.DISCOVERED_AT).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {lineage.filter(l => l.TARGET_TABLE === table.FULL_TABLE_NAME).length === 0 && (
-                    <div style={{ padding: '12px', color: '#6c757d', fontSize: '0.9em' }}>
-                      No upstream sources found
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Downstream Targets */}
-              <div>
-                <h4 style={{ fontSize: '0.95em', color: '#6c757d', marginBottom: '12px' }}>
-                  ➡️ Downstream Targets ({lineage.filter(l => l.SOURCE_TABLE === table.FULL_TABLE_NAME).length})
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {lineage.filter(l => l.SOURCE_TABLE === table.FULL_TABLE_NAME).map(node => (
-                    <div 
-                      key={node.LINEAGE_ID}
-                      style={{ 
-                        padding: '12px',
-                        border: '1px solid #e9ecef',
-                        borderRadius: '4px',
-                        backgroundColor: '#f8f9fa'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '1.5em' }}>📈</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '500', color: '#007bff' }}>{node.TARGET_TABLE}</div>
-                          <div style={{ fontSize: '0.85em', color: '#6c757d', marginTop: '4px' }}>
-                            Type: {node.LINEAGE_TYPE} • Discovered: {new Date(node.DISCOVERED_AT).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {lineage.filter(l => l.SOURCE_TABLE === table.FULL_TABLE_NAME).length === 0 && (
-                    <div style={{ padding: '12px', color: '#6c757d', fontSize: '0.9em' }}>
-                      No downstream targets found
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+          <LineageGraph 
+            lineage={lineage} 
+            currentTable={table} 
+            darkMode={false} 
+          />
         </div>
       )}
 
       {activeTab === 'activity' && (
         <div>
           {/* Rating Section */}
-          <div style={{ marginBottom: '30px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
-            <h3 style={{ fontSize: '1em', marginBottom: '12px' }}>Rate this table</h3>
+          <div style={{ marginBottom: '30px', padding: '20px', backgroundColor: colors.cardBg, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+            <h3 style={{ fontSize: '1em', marginBottom: '12px', color: colors.text }}>Rate this table</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <div>{renderStars(userRating, true)}</div>
-              <div style={{ color: '#6c757d', fontSize: '0.9em' }}>
+              <div style={{ color: colors.textMuted, fontSize: '0.9em' }}>
                 Average: {table.AVG_RATING.toFixed(1)} ({table.RATING_COUNT} rating{table.RATING_COUNT !== 1 ? 's' : ''})
               </div>
             </div>
@@ -1290,7 +1546,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
 
           {/* Comments Section */}
           <div>
-            <h3 style={{ fontSize: '1em', marginBottom: '12px' }}>Comments</h3>
+            <h3 style={{ fontSize: '1em', marginBottom: '12px', color: colors.text }}>Comments</h3>
             
             {/* Add Comment */}
             <div style={{ marginBottom: '20px' }}>
@@ -1302,9 +1558,11 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                   width: '100%', 
                   minHeight: '80px', 
                   padding: '12px', 
-                  border: '1px solid #ced4da',
+                  border: `1px solid ${colors.inputBorder}`,
                   borderRadius: '4px',
-                  fontSize: '0.9em'
+                  fontSize: '0.9em',
+                  backgroundColor: colors.inputBg,
+                  color: colors.text
                 }}
               />
               <button 
@@ -1313,8 +1571,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 style={{ 
                   marginTop: '8px',
                   padding: '8px 16px', 
-                  backgroundColor: '#007bff', 
-                  color: 'white', 
+                  backgroundColor: colors.primary, 
+                  color: colors.primaryText, 
                   border: 'none', 
                   borderRadius: '4px', 
                   cursor: loading || !newComment.trim() ? 'not-allowed' : 'pointer'
@@ -1327,7 +1585,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
             {/* Comments List */}
             <div>
               {comments.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#6c757d', fontStyle: 'italic' }}>
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textMuted, fontStyle: 'italic' }}>
                   No comments yet. Be the first to comment!
                 </div>
               ) : (
@@ -1336,18 +1594,19 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                     key={comment.COMMENT_ID}
                     style={{ 
                       padding: '12px', 
-                      border: '1px solid #e9ecef',
+                      border: `1px solid ${colors.border}`,
                       borderRadius: '4px',
-                      marginBottom: '12px'
+                      marginBottom: '12px',
+                      backgroundColor: colors.cardBg
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <div style={{ fontWeight: '600', fontSize: '0.9em' }}>{comment.USER_NAME}</div>
-                      <div style={{ color: '#6c757d', fontSize: '0.85em' }}>
+                      <div style={{ fontWeight: '600', fontSize: '0.9em', color: colors.text }}>{comment.USER_NAME}</div>
+                      <div style={{ color: colors.textMuted, fontSize: '0.85em' }}>
                         {new Date(comment.CREATED_AT).toLocaleString()}
                       </div>
                     </div>
-                    <div style={{ fontSize: '0.9em' }}>{comment.COMMENT_TEXT}</div>
+                    <div style={{ fontSize: '0.9em', color: colors.text }}>{comment.COMMENT_TEXT}</div>
                   </div>
                 ))
               )}
@@ -1383,12 +1642,14 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '2px solid #667eea',
+                border: `2px solid ${colors.primary}`,
                 borderRadius: '8px',
                 fontSize: '0.95em',
                 minHeight: '80px',
                 fontFamily: 'inherit',
-                resize: 'vertical'
+                resize: 'vertical',
+                backgroundColor: colors.inputBg,
+                color: colors.text
               }}
               autoFocus
             />
@@ -1406,8 +1667,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 }}
                 style={{
                   padding: '10px 20px',
-                  backgroundColor: '#667eea',
-                  color: 'white',
+                  backgroundColor: colors.primary,
+                  color: colors.primaryText,
                   border: 'none',
                   borderRadius: '8px',
                   cursor: 'pointer',
@@ -1421,9 +1682,9 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
                 onClick={closeModal}
                 style={{
                   padding: '10px 20px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
+                  backgroundColor: 'transparent',
+                  color: colors.textMuted,
+                  border: `1px solid ${colors.border}`,
                   borderRadius: '8px',
                   cursor: 'pointer',
                   fontSize: '0.95em'
@@ -1437,8 +1698,8 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
               onClick={closeModal}
               style={{
                 padding: '10px 20px',
-                backgroundColor: '#667eea',
-                color: 'white',
+                backgroundColor: colors.primary,
+                color: colors.primaryText,
                 border: 'none',
                 borderRadius: '8px',
                 cursor: 'pointer',
