@@ -17,7 +17,6 @@ interface TableDetailProps {
     CREATED: string;
     LAST_ALTERED: string;
     SYSTEM_COMMENT: string;
-    USER_DESCRIPTION: string;
     AVG_RATING: number;
     RATING_COUNT: number;
   };
@@ -72,8 +71,6 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
   const [columnAttributes, setColumnAttributes] = useState<any[]>([]);
   const [allAttributes, setAllAttributes] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
-  const [description, setDescription] = useState(table.USER_DESCRIPTION || '');
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [newTag, setNewTag] = useState('');
   const [tagSearch, setTagSearch] = useState('');
@@ -405,34 +402,6 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
     }
   };
 
-  const handleSaveDescription = async () => {
-    if (!justification.trim()) {
-      showMessage('Error', 'Please provide a justification for this change', 'error');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/description/${encodeURIComponent(table.FULL_TABLE_NAME)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, justification })
-      });
-      const result = await response.json();
-      if (result.success) {
-        setIsEditingDescription(false);
-        setJustification('');
-        showMessage('Success', 'Description change request submitted for approval', 'success');
-      } else {
-        showMessage('Error', 'Failed to submit request: ' + result.error, 'error');
-      }
-    } catch (err) {
-      showMessage('Error', 'Failed to submit description change', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleAddComment = async () => {
     if (!newComment.trim()) return;
     
@@ -608,27 +577,7 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
             </div>
           </div>
           
-          {/* Contacts Section */}
-          {contacts && contacts.length > 0 && (
-            <div style={{ 
-              flex: 1,
-              minWidth: '250px',
-              padding: '12px',
-              backgroundColor: colors.cardBg,
-              borderRadius: '8px',
-              border: `1px solid ${colors.border}`
-            }}>
-              <div style={{ fontWeight: '600', fontSize: '0.9em', marginBottom: '8px', color: colors.textSecondary }}>
-                📞 Table Contacts
-              </div>
-              {contacts.map((contact, idx) => (
-                <div key={idx} style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>
-                  <strong>{contact.PURPOSE}:</strong> {contact.METHOD}
-                  {contact.INHERITED && <span style={{ fontStyle: 'italic' }}> (inherited)</span>}
-                </div>
-              ))}
-            </div>
-          )}
+
           
           <button 
             onClick={() => setShowAccessModal(true)}
@@ -910,108 +859,35 @@ const TableDetailView: React.FC<TableDetailProps> = ({ table, onBack }) => {
             )}
           </div>
 
+          {/* Table Contacts Section */}
+          {contacts && contacts.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '1em', marginBottom: '8px', color: colors.text }}>📞 Table Contacts</h3>
+              <div style={{ 
+                padding: '12px',
+                backgroundColor: colors.cardBg,
+                borderRadius: '4px',
+                border: `1px solid ${colors.border}`
+              }}>
+                {contacts.map((contact, idx) => (
+                  <div key={idx} style={{ fontSize: '0.85em', color: colors.textMuted, marginBottom: '4px' }}>
+                    <strong>{contact.PURPOSE}:</strong> {contact.METHOD}
+                    {contact.INHERITED && <span style={{ fontStyle: 'italic' }}> (inherited)</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Description Section */}
           {table.SYSTEM_COMMENT && (
             <div style={{ marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '1em', marginBottom: '8px', color: colors.text }}>System Description</h3>
+              <h3 style={{ fontSize: '1em', marginBottom: '8px', color: colors.text }}>Description</h3>
               <div style={{ padding: '12px', backgroundColor: colors.cardBg, borderRadius: '4px', border: `1px solid ${colors.border}`, color: colors.text }}>
                 {table.SYSTEM_COMMENT}
               </div>
             </div>
           )}
-
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <h3 style={{ fontSize: '1em', margin: 0, color: colors.text }}>User Description</h3>
-              {!isEditingDescription && (
-                <button 
-                  onClick={() => setIsEditingDescription(true)}
-                  style={{ 
-                    padding: '4px 12px', 
-                    backgroundColor: colors.primary, 
-                    color: colors.primaryText, 
-                    border: 'none', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer',
-                    fontSize: '0.85em'
-                  }}
-                >
-                  ✏️ Edit
-                </button>
-              )}
-            </div>
-            {isEditingDescription ? (
-              <div>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  style={{ 
-                    width: '100%', 
-                    minHeight: '100px', 
-                    padding: '12px', 
-                    border: `1px solid ${colors.inputBorder}`,
-                    borderRadius: '4px',
-                    fontSize: '0.9em',
-                    marginBottom: '8px',
-                    backgroundColor: colors.inputBg,
-                    color: colors.text
-                  }}
-                  placeholder="Add a description for this table..."
-                />
-                <input
-                  type="text"
-                  value={justification}
-                  onChange={(e) => setJustification(e.target.value)}
-                  style={{ 
-                    width: '100%', 
-                    padding: '8px 12px', 
-                    border: `1px solid ${colors.inputBorder}`,
-                    borderRadius: '4px',
-                    fontSize: '0.9em',
-                    backgroundColor: colors.inputBg,
-                    color: colors.text
-                  }}
-                  placeholder="Justification for this change (required)..."
-                />
-                <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
-                  <button 
-                    onClick={handleSaveDescription}
-                    disabled={loading}
-                    style={{ 
-                      padding: '8px 16px', 
-                      backgroundColor: colors.success, 
-                      color: 'white', 
-                      border: 'none', 
-                      borderRadius: '4px', 
-                      cursor: loading ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    Submit for Approval
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setIsEditingDescription(false);
-                      setDescription(table.USER_DESCRIPTION || '');
-                      setJustification('');
-                    }}
-                    style={{ 
-                      padding: '8px 16px', 
-                      backgroundColor: 'transparent', 
-                      color: colors.textMuted, 
-                      border: `1px solid ${colors.border}`, 
-                      borderRadius: '4px', 
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ padding: '12px', backgroundColor: colors.cardBg, borderRadius: '4px', border: `1px solid ${colors.border}`, color: colors.text }}>
-                {description || <em style={{ color: colors.textMuted }}>No user description yet. Click Edit to add one.</em>}
-              </div>
-            )}
-          </div>
 
           {/* Tags Section */}
           <div style={{ marginTop: '20px' }}>

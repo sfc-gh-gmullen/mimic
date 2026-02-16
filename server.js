@@ -1367,7 +1367,7 @@ app.put('/api/description/:table', async (req, res) => {
         let assignedTo = null;
         try {
             const contacts = await executeQuery(connection, contactsQuery);
-            const owner = contacts.find(c => c.PURPOSE === 'OWNER' || c.PURPOSE === 'STEWARD');
+            const owner = contacts.find(c => c.PURPOSE === 'DATA_OWNER' || c.PURPOSE === 'STEWARD');
             if (owner) {
                 assignedTo = owner.METHOD;
             }
@@ -2032,15 +2032,24 @@ app.get('/api/contacts-bulk', async (req, res) => {
         
         const rows = await executeQuery(connection, query);
         
-        // Transform into a map: { "DB.SCHEMA.TABLE": [{PURPOSE: "DATA_OWNER", METHOD: "user@example.com"}, ...] }
+        // Transform into a map with deduplication: { "DB.SCHEMA.TABLE": [{PURPOSE: "DATA_OWNER", METHOD: "user@example.com"}, ...] }
         const tableContactsMap = (rows || []).reduce((acc, row) => {
             if (!acc[row.FULL_TABLE_NAME]) {
                 acc[row.FULL_TABLE_NAME] = [];
             }
-            acc[row.FULL_TABLE_NAME].push({
-                PURPOSE: row.PURPOSE,
-                METHOD: row.METHOD
-            });
+            
+            // Check if we already have a contact for this purpose
+            const existingIndex = acc[row.FULL_TABLE_NAME].findIndex(c => c.PURPOSE === row.PURPOSE);
+            
+            if (existingIndex === -1) {
+                // No existing contact for this purpose, add it
+                acc[row.FULL_TABLE_NAME].push({
+                    PURPOSE: row.PURPOSE,
+                    METHOD: row.METHOD
+                });
+            }
+            // If duplicate exists, keep the first one (could add more sophisticated logic here)
+            
             return acc;
         }, {});
         
@@ -2055,7 +2064,7 @@ app.get('/api/contacts-bulk', async (req, res) => {
     }
 });
 
-// Get tags for a table
+// Get tags for a table (combines TABLE_TAGS and native Snowflake tags)
 app.get('/api/tags/:database/:schema/:table', async (req, res) => {
     let connection;
     const { database, schema, table } = req.params;
@@ -2064,15 +2073,44 @@ app.get('/api/tags/:database/:schema/:table', async (req, res) => {
     try {
         connection = await connectToSnowflake(req);
         
-        const query = `
-            SELECT TAG_ID, TAG_NAME, CREATED_BY, CREATED_AT
+        // Query TABLE_TAGS for temporary/pending tags
+        const tableTagsQuery = `
+            SELECT TAG_ID, TAG_NAME, CREATED_BY, CREATED_AT, 'TABLE_TAGS' as SOURCE
             FROM TABLE_TAGS
             WHERE TABLE_FULL_NAME = '${sanitizeInput(fullTableName)}'
-            ORDER BY CREATED_AT DESC
         `;
         
-        const rows = await executeQuery(connection, query);
-        res.json({ success: true, data: rows });
+        // Query native Snowflake tags
+        const nativeTagsQuery = `
+            SELECT 
+                OBJECT_DATABASE || '.' || OBJECT_SCHEMA || '.' || OBJECT_NAME || '.' || TAG_NAME as TAG_ID,
+                TAG_NAME,
+                TAG_VALUE,
+                NULL as CREATED_BY,
+                NULL as CREATED_AT,
+                'NATIVE' as SOURCE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
+            WHERE OBJECT_DATABASE = '${sanitizeInput(database)}'
+              AND OBJECT_SCHEMA = '${sanitizeInput(schema)}'
+              AND OBJECT_NAME = '${sanitizeInput(table)}'
+              AND DOMAIN = 'TABLE'
+              AND OBJECT_DELETED IS NULL
+        `;
+        
+        // Execute both queries
+        const [tableTagsRows, nativeTagsRows] = await Promise.all([
+            executeQuery(connection, tableTagsQuery).catch(() => []),
+            executeQuery(connection, nativeTagsQuery).catch(() => [])
+        ]);
+        
+        // Combine and deduplicate results (native tags take precedence)
+        const nativeTagNames = new Set(nativeTagsRows.map(t => t.TAG_NAME));
+        const tableTagsFiltered = tableTagsRows.filter(t => !nativeTagNames.has(t.TAG_NAME));
+        
+        const allTags = [...nativeTagsRows, ...tableTagsFiltered];
+        allTags.sort((a, b) => new Date(b.CREATED_AT) - new Date(a.CREATED_AT));
+        
+        res.json({ success: true, data: allTags });
         
     } catch (error) {
         console.error('❌ Get tags error:', error);
@@ -2105,7 +2143,7 @@ app.post('/api/tags', async (req, res) => {
         let assignedTo = null;
         try {
             const contacts = await executeQuery(connection, contactsQuery);
-            const owner = contacts.find(c => c.PURPOSE === 'OWNER' || c.PURPOSE === 'STEWARD');
+            const owner = contacts.find(c => c.PURPOSE === 'DATA_OWNER' || c.PURPOSE === 'STEWARD');
             if (owner) {
                 assignedTo = owner.METHOD;
             }
@@ -2177,7 +2215,7 @@ app.delete('/api/tags/:tagId', async (req, res) => {
         let assignedTo = null;
         try {
             const contacts = await executeQuery(connection, contactsQuery);
-            const owner = contacts.find(c => c.PURPOSE === 'OWNER' || c.PURPOSE === 'STEWARD');
+            const owner = contacts.find(c => c.PURPOSE === 'DATA_OWNER' || c.PURPOSE === 'STEWARD');
             if (owner) {
                 assignedTo = owner.METHOD;
             }
@@ -2590,7 +2628,7 @@ app.post('/api/change-requests', async (req, res) => {
                     FROM TABLE(SNOWFLAKE.CORE.GET_CONTACTS('${tableName}'))
                 `;
                 const contacts = await executeQuery(connection, contactsQuery);
-                const owner = contacts.find(c => c.PURPOSE === 'OWNER' || c.PURPOSE === 'STEWARD');
+            const owner = contacts.find(c => c.PURPOSE === 'DATA_OWNER' || c.PURPOSE === 'STEWARD');
                 if (owner) {
                     assignedTo = owner.METHOD;
                 }
@@ -3340,12 +3378,40 @@ app.get('/api/contacts/:database/:schema/:table', async (req, res) => {
         connection = await connectToSnowflake(req);
         
         const query = `
-            SELECT *
-            FROM TABLE(SNOWFLAKE.CORE.GET_CONTACTS('${sanitizeInput(fullTableName)}', 'TABLE'))
+            SELECT 
+                PURPOSE,
+                 nvl(c.email,u.EMAIL) as METHOD,
+                URL,
+                USER,
+                LEVEL,
+                FALSE as INHERITED,
+                CURRENT_TIMESTAMP() as CREATED_AT
+            FROM TABLE(SNOWFLAKE.CORE.GET_CONTACTS('${sanitizeInput(fullTableName)}', 'TABLE')) c
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u
+                ON UPPER(c.USER) = UPPER(u.NAME)
         `;
         
         const rows = await executeQuery(connection, query);
-        res.json({ success: true, data: rows });
+        
+        // Deduplicate contacts by PURPOSE, preferring direct contacts over inherited ones
+        const contactMap = new Map();
+        rows.forEach(contact => {
+            const key = contact.PURPOSE;
+            const existing = contactMap.get(key);
+            
+            // Keep this contact if:
+            // 1. No existing contact for this purpose, OR
+            // 2. Existing contact is inherited and this one is direct, OR  
+            // 3. Both are same type but this one is more recent
+            if (!existing || 
+                (existing.INHERITED && !contact.INHERITED) ||
+                (existing.INHERITED === contact.INHERITED && new Date(contact.CREATED_AT || 0) > new Date(existing.CREATED_AT || 0))) {
+                contactMap.set(key, contact);
+            }
+        });
+        
+        const deduplicatedContacts = Array.from(contactMap.values());
+        res.json({ success: true, data: deduplicatedContacts });
         
     } catch (error) {
         console.error('❌ Get contacts error:', error);
