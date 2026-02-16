@@ -564,70 +564,87 @@ const ContentChangeApproval: React.FC<ContentChangeApprovalProps> = ({ canApprov
 
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       {canApprove && (
-                        <button
-                          onClick={handleApprove}
-                          disabled={loading}
-                          style={{ 
-                            flex: '1 1 200px',
-                            padding: '12px 24px',
-                            backgroundColor: '#28a745',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '12px',
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            fontSize: '1em',
-                            fontWeight: '600',
-                            opacity: loading ? 0.6 : 1,
-                            transition: 'all 0.2s'
-                          }}
-                          onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#218838')}
-                          onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#28a745')}
-                        >
-                          ✓ Approve & Apply
-                        </button>
+                        <>
+                          <button
+                            onClick={handleApprove}
+                            disabled={loading}
+                            style={{ 
+                              flex: '1 1 200px',
+                              padding: '12px 24px',
+                              backgroundColor: '#28a745',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '12px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              fontSize: '1em',
+                              fontWeight: '600',
+                              opacity: loading ? 0.6 : 1,
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#218838')}
+                            onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#28a745')}
+                          >
+                            ✓ Approve & Apply
+                          </button>
+                          <button
+                            onClick={handleReturnForInfo}
+                            disabled={loading}
+                            style={{ 
+                              flex: '1 1 200px',
+                              padding: '12px 24px',
+                              backgroundColor: '#ffc107',
+                              color: '#212529',
+                              border: 'none',
+                              borderRadius: '12px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              fontSize: '1em',
+                              fontWeight: '600',
+                              opacity: loading ? 0.6 : 1,
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#e0a800')}
+                            onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#ffc107')}
+                          >
+                            ↩️ Return for More Info
+                          </button>
+                          <button
+                            onClick={handleDeny}
+                            disabled={loading}
+                            style={{ 
+                              flex: '1 1 150px',
+                              padding: '12px 24px',
+                              backgroundColor: '#dc3545',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '12px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              fontSize: '1em',
+                              fontWeight: '600',
+                              opacity: loading ? 0.6 : 1,
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#c82333')}
+                            onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#dc3545')}
+                          >
+                            ✗ Deny
+                          </button>
+                        </>
                       )}
-                      <button
-                        onClick={handleReturnForInfo}
-                        disabled={loading}
-                        style={{ 
-                          flex: '1 1 200px',
-                          padding: '12px 24px',
-                          backgroundColor: '#ffc107',
-                          color: '#212529',
-                          border: 'none',
+                      {!canApprove && (
+                        <div style={{
+                          flex: '1 1 100%',
+                          padding: '16px',
+                          backgroundColor: '#f8f9fa',
                           borderRadius: '12px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontSize: '1em',
-                          fontWeight: '600',
-                          opacity: loading ? 0.6 : 1,
-                          transition: 'all 0.2s'
-                        }}
-                        onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#e0a800')}
-                        onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#ffc107')}
-                      >
-                        ↩️ Return for More Info
-                      </button>
-                      <button
-                        onClick={handleDeny}
-                        disabled={loading}
-                        style={{ 
-                          flex: '1 1 150px',
-                          padding: '12px 24px',
-                          backgroundColor: '#dc3545',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '12px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontSize: '1em',
-                          fontWeight: '600',
-                          opacity: loading ? 0.6 : 1,
-                          transition: 'all 0.2s'
-                        }}
-                        onMouseOver={(e) => !loading && (e.currentTarget.style.backgroundColor = '#c82333')}
-                        onMouseOut={(e) => !loading && (e.currentTarget.style.backgroundColor = '#dc3545')}
-                      >
-                        ✗ Deny
-                      </button>
+                          border: '2px solid #dee2e6',
+                          textAlign: 'center',
+                          color: '#6c757d'
+                        }}>
+                          <p style={{ margin: 0, fontWeight: '500' }}>
+                            You do not have permission to approve, deny, or return this request.
+                          </p>
+                        </div>
+                      )}
                       <button
                         onClick={resetSelection}
                         disabled={loading}

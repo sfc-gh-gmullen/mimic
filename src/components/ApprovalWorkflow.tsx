@@ -733,147 +733,163 @@ const ApprovalWorkflow: React.FC<ApprovalWorkflowProps> = ({ canApprove }) => {
                     />
                   </div>
 
-                  <div style={{ 
-                    display: 'grid', 
-                    gridTemplateColumns: canApprove ? 'repeat(auto-fit, minmax(200px, 1fr))' : '1fr',
-                    gap: '12px', 
-                    marginTop: '20px' 
-                  }}>
-                    {canApprove && (
-                      <button
-                        onClick={handleApproveWithGrant}
-                        disabled={loading}
-                        style={{ 
-                          padding: '14px 20px',
-                          backgroundColor: '#28a745',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '12px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontWeight: '600',
-                          fontSize: '0.95em',
-                          opacity: loading ? 0.6 : 1,
-                          transition: 'all 0.2s',
-                          boxShadow: '0 4px 12px rgba(40, 167, 69, 0.3)'
-                        }}
-                        onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
-                        onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                      >
-                        ✓ Approve & Grant
-                      </button>
-                    )}
-                    <button
-                      onClick={handleDeny}
-                      disabled={loading}
-                      style={{ 
-                        padding: '14px 20px',
-                        backgroundColor: '#dc3545',
-                        color: 'white',
-                        border: 'none',
+                  {canApprove ? (
+                    <>
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '12px', 
+                        marginTop: '20px' 
+                      }}>
+                        <button
+                          onClick={handleApproveWithGrant}
+                          disabled={loading}
+                          style={{ 
+                            padding: '14px 20px',
+                            backgroundColor: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '12px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontWeight: '600',
+                            fontSize: '0.95em',
+                            opacity: loading ? 0.6 : 1,
+                            transition: 'all 0.2s',
+                            boxShadow: '0 4px 12px rgba(40, 167, 69, 0.3)'
+                          }}
+                          onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
+                          onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                          ✓ Approve & Grant
+                        </button>
+                        <button
+                          onClick={handleDeny}
+                          disabled={loading}
+                          style={{ 
+                            padding: '14px 20px',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '12px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontWeight: '600',
+                            fontSize: '0.95em',
+                            opacity: loading ? 0.6 : 1,
+                            transition: 'all 0.2s',
+                            boxShadow: '0 4px 12px rgba(220, 53, 69, 0.3)'
+                          }}
+                          onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
+                          onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                          ✗ Deny
+                        </button>
+                      </div>
+
+                      {/* Request More Info Section */}
+                      <div style={{ 
+                        marginTop: '20px', 
+                        padding: '16px', 
+                        backgroundColor: '#fff8e1',
                         borderRadius: '12px',
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        fontWeight: '600',
-                        fontSize: '0.95em',
-                        opacity: loading ? 0.6 : 1,
-                        transition: 'all 0.2s',
-                        boxShadow: '0 4px 12px rgba(220, 53, 69, 0.3)'
-                      }}
-                      onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
-                      onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                    >
-                      ✗ Deny
-                    </button>
-                  </div>
+                        border: '2px dashed #ffc107'
+                      }}>
+                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#856404', fontSize: '0.9em' }}>
+                          ℹ️ Request Additional Information
+                        </label>
+                        <textarea
+                          value={infoNeeded}
+                          onChange={(e) => setInfoNeeded(e.target.value)}
+                          placeholder="What additional information do you need from the requester?"
+                          rows={2}
+                          style={{ 
+                            width: '100%',
+                            padding: '12px',
+                            border: '2px solid #ffc107',
+                            borderRadius: '10px',
+                            fontSize: '0.9em',
+                            resize: 'vertical',
+                            marginBottom: '12px'
+                          }}
+                        />
+                        <button
+                          onClick={handleRequestMoreInfo}
+                          disabled={loading}
+                          style={{ 
+                            padding: '10px 16px',
+                            backgroundColor: '#ffc107',
+                            color: '#856404',
+                            border: 'none',
+                            borderRadius: '10px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontWeight: '600',
+                            fontSize: '0.9em',
+                            width: '100%'
+                          }}
+                        >
+                          📩 Send Back for More Info
+                        </button>
+                      </div>
 
-                  {/* Request More Info Section */}
-                  <div style={{ 
-                    marginTop: '20px', 
-                    padding: '16px', 
-                    backgroundColor: '#fff8e1',
-                    borderRadius: '12px',
-                    border: '2px dashed #ffc107'
-                  }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#856404', fontSize: '0.9em' }}>
-                      ℹ️ Request Additional Information
-                    </label>
-                    <textarea
-                      value={infoNeeded}
-                      onChange={(e) => setInfoNeeded(e.target.value)}
-                      placeholder="What additional information do you need from the requester?"
-                      rows={2}
-                      style={{ 
-                        width: '100%',
-                        padding: '12px',
-                        border: '2px solid #ffc107',
-                        borderRadius: '10px',
-                        fontSize: '0.9em',
-                        resize: 'vertical',
-                        marginBottom: '12px'
-                      }}
-                    />
-                    <button
-                      onClick={handleRequestMoreInfo}
-                      disabled={loading}
-                      style={{ 
-                        padding: '10px 16px',
-                        backgroundColor: '#ffc107',
-                        color: '#856404',
-                        border: 'none',
-                        borderRadius: '10px',
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        fontWeight: '600',
-                        fontSize: '0.9em',
-                        width: '100%'
-                      }}
-                    >
-                      📩 Send Back for More Info
-                    </button>
-                  </div>
-
-                  {/* Reassign Section */}
-                  <div style={{ 
-                    marginTop: '16px', 
-                    padding: '16px', 
-                    backgroundColor: '#e7f3ff',
-                    borderRadius: '12px',
-                    border: '2px dashed #17a2b8'
-                  }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#0c5460', fontSize: '0.9em' }}>
-                      🔄 Reassign to Another Approver
-                    </label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="text"
-                        value={reassignTo}
-                        onChange={(e) => setReassignTo(e.target.value)}
-                        placeholder="Enter username to reassign"
-                        style={{ 
-                          flex: 1,
-                          padding: '10px',
-                          border: '2px solid #17a2b8',
-                          borderRadius: '10px',
-                          fontSize: '0.9em'
-                        }}
-                      />
-                      <button
-                        onClick={handleReassign}
-                        disabled={loading}
-                        style={{ 
-                          padding: '10px 16px',
-                          backgroundColor: '#17a2b8',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '10px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontWeight: '600',
-                          fontSize: '0.9em',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        Reassign
-                      </button>
+                      {/* Reassign Section */}
+                      <div style={{ 
+                        marginTop: '16px', 
+                        padding: '16px', 
+                        backgroundColor: '#e7f3ff',
+                        borderRadius: '12px',
+                        border: '2px dashed #17a2b8'
+                      }}>
+                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#0c5460', fontSize: '0.9em' }}>
+                          🔄 Reassign to Another Approver
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            value={reassignTo}
+                            onChange={(e) => setReassignTo(e.target.value)}
+                            placeholder="Enter username to reassign"
+                            style={{ 
+                              flex: 1,
+                              padding: '10px',
+                              border: '2px solid #17a2b8',
+                              borderRadius: '10px',
+                              fontSize: '0.9em'
+                            }}
+                          />
+                          <button
+                            onClick={handleReassign}
+                            disabled={loading}
+                            style={{ 
+                              padding: '10px 16px',
+                              backgroundColor: '#17a2b8',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '10px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              fontWeight: '600',
+                              fontSize: '0.9em',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            Reassign
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{
+                      marginTop: '20px',
+                      padding: '16px',
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '12px',
+                      border: '2px solid #dee2e6',
+                      textAlign: 'center',
+                      color: '#6c757d'
+                    }}>
+                      <p style={{ margin: 0, fontWeight: '500' }}>
+                        You do not have permission to approve, deny, or return this request.
+                      </p>
                     </div>
-                  </div>
+                  )}
 
                   <button
                     onClick={resetForm}

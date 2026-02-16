@@ -18,7 +18,7 @@ DATABASE_NAME="CATALOG_DB"
 SCHEMA_NAME="CATALOG_SCHEMA"
 SERVICE_NAME="CATALOG_SERVICE"
 IMAGE_TAG="latest"
-CONNECTION="demo142_cursor"
+CONNECTION=""
 SERVICE_ROLE="SYSADMIN"
 
 # Parse command line arguments
@@ -26,7 +26,10 @@ SKIP_DB_SETUP=false
 SKIP_BUILD=false
 
 show_usage() {
-    echo "Usage: $0 [OPTIONS]"
+    echo "Usage: $0 [OPTIONS] --connection <connection-name>"
+    echo ""
+    echo "Required:"
+    echo "  --connection   Snowflake CLI connection name"
     echo ""
     echo "Options:"
     echo "  --skip-db      Skip database setup (use when DB already configured)"
@@ -34,14 +37,18 @@ show_usage() {
     echo "  --help, -h     Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                       # Full deployment"
-    echo "  $0 --skip-db             # Skip DB setup, rebuild and deploy"
-    echo "  $0 --skip-build          # Setup DB, use existing build"
-    echo "  $0 --skip-db --skip-build # Quick redeploy (image push + service restart)"
+    echo "  $0 --connection my_connection                    # Full deployment"
+    echo "  $0 --connection my_connection --skip-db          # Skip DB setup, rebuild and deploy"
+    echo "  $0 --connection my_connection --skip-build       # Setup DB, use existing build"
+    echo "  $0 --connection my_connection --skip-db --skip-build # Quick redeploy"
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --connection)
+            CONNECTION="$2"
+            shift 2
+            ;;
         --skip-db)
             SKIP_DB_SETUP=true
             shift
@@ -61,6 +68,13 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Validate required parameters
+if [ -z "$CONNECTION" ]; then
+    echo -e "${RED}❌ Error: --connection parameter is required${NC}"
+    show_usage
+    exit 1
+fi
 
 echo -e "${BLUE}🚀 SPCS Deployment for ${APP_NAME}${NC}"
 

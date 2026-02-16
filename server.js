@@ -8,6 +8,10 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 const HOST = process.env.HOST || 'localhost';
 
+// In-memory store for user role selections (keyed by username)
+// In production, consider using Redis or a database table
+const userRoleSelections = new Map();
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -90,20 +94,150 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// Debug endpoint to test queries and see detailed errors
+app.get('/api/debug', async (req, res) => {
+    const results = {
+        timestamp: new Date().toISOString(),
+        environment: {
+            SNOWFLAKE_ACCOUNT: process.env.SNOWFLAKE_ACCOUNT,
+            SNOWFLAKE_HOST: process.env.SNOWFLAKE_HOST,
+            SNOWFLAKE_DATABASE: process.env.SNOWFLAKE_DATABASE,
+            SNOWFLAKE_SCHEMA: process.env.SNOWFLAKE_SCHEMA,
+            SNOWFLAKE_WAREHOUSE: process.env.SNOWFLAKE_WAREHOUSE,
+            SNOWFLAKE_ROLE: process.env.SNOWFLAKE_ROLE,
+        },
+        tests: {}
+    };
+    
+    let connection;
+    try {
+        connection = await connectToSnowflake(req);
+        results.tests.connection = { success: true, message: 'Connected to Snowflake' };
+        
+        // Test TAG_CACHE query
+        try {
+            const tagCacheRows = await executeQuery(connection, `
+                SELECT COUNT(*) as CNT FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
+            `);
+            results.tests.tagCache = { success: true, count: tagCacheRows[0]?.CNT };
+        } catch (e) {
+            results.tests.tagCache = { success: false, error: e.message, code: e.code };
+        }
+        
+        // Test Data Products query
+        try {
+            const dataProductRows = await executeQuery(connection, `
+                SELECT DISTINCT TAG_VALUE
+                FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
+                WHERE TAG_NAME = 'DATA_PRODUCT'
+                AND TAG_SCHEMA = 'CATALOG_SCHEMA'
+                AND TAG_DATABASE = 'CATALOG_DB'
+                AND TAG_VALUE IS NOT NULL
+                ORDER BY TAG_VALUE
+            `);
+            results.tests.dataProducts = { success: true, values: dataProductRows.map(r => r.TAG_VALUE) };
+        } catch (e) {
+            results.tests.dataProducts = { success: false, error: e.message, code: e.code };
+        }
+        
+        // Test tag-references query
+        try {
+            const tagRefRows = await executeQuery(connection, `
+                SELECT COUNT(*) as CNT 
+                FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
+            `);
+            results.tests.tagReferences = { success: true, count: tagRefRows[0]?.CNT };
+        } catch (e) {
+            results.tests.tagReferences = { success: false, error: e.message, code: e.code };
+        }
+        
+        // Test CATALOG_METADATA access
+        try {
+            const catalogRows = await executeQuery(connection, `
+                SELECT COUNT(*) as CNT FROM CATALOG_DB.CATALOG_SCHEMA.CATALOG_METADATA LIMIT 1
+            `);
+            results.tests.catalogMetadata = { success: true, count: catalogRows[0]?.CNT };
+        } catch (e) {
+            results.tests.catalogMetadata = { success: false, error: e.message, code: e.code };
+        }
+        
+        // Get current user/role info
+        try {
+            const userRows = await executeQuery(connection, `
+                SELECT CURRENT_USER() as USER, CURRENT_ROLE() as ROLE, CURRENT_WAREHOUSE() as WAREHOUSE
+            `);
+            results.tests.currentContext = { success: true, data: userRows[0] };
+        } catch (e) {
+            results.tests.currentContext = { success: false, error: e.message };
+        }
+        
+    } catch (e) {
+        results.tests.connection = { success: false, error: e.message, code: e.code };
+    } finally {
+        if (connection) connection.destroy();
+    }
+    
+    res.json(results);
+});
+
+// Test a specific query with detailed error output
+app.post('/api/debug/query', async (req, res) => {
+    const { sql } = req.body;
+    
+    if (!sql) {
+        return res.status(400).json({ success: false, error: 'SQL query required in request body' });
+    }
+    
+    let connection;
+    try {
+        connection = await connectToSnowflake(req);
+        const rows = await executeQuery(connection, sql);
+        res.json({ 
+            success: true, 
+            rowCount: rows.length,
+            data: rows.slice(0, 100) // Limit to 100 rows
+        });
+    } catch (e) {
+        res.json({ 
+            success: false, 
+            error: e.message,
+            code: e.code,
+            sqlState: e.sqlState,
+            data: e.data
+        });
+    } finally {
+        if (connection) connection.destroy();
+    }
+});
+
 // Helper function to sanitize user input (basic SQL injection prevention)
 function sanitizeInput(input) {
     if (!input) return '';
     return input.replace(/'/g, "''").substring(0, 1000); // Basic sanitization and length limit
 }
 
+// Helper function to get the effective role for a user
+// Uses the user's selected role if set, otherwise falls back to SPCS header
+function getEffectiveRole(req) {
+    const spcsUser = req?.headers?.['sf-context-current-user'];
+    const spcsRole = req?.headers?.['sf-context-current-role'] || 'PUBLIC';
+    
+    // Check if user has a selected role override
+    if (spcsUser && userRoleSelections.has(spcsUser)) {
+        return userRoleSelections.get(spcsUser);
+    }
+    
+    return spcsRole;
+}
+
 // Helper function to check if current role has a permission
 async function checkPermission(connection, permissionType, req) {
-    const spcsRole = req?.headers?.['sf-context-current-role'] || 'PUBLIC';
+    const effectiveRole = getEffectiveRole(req);
     
     const query = `
         SELECT COUNT(*) as HAS_PERMISSION
         FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
-        WHERE SNOWFLAKE_ROLE = '${sanitizeInput(spcsRole)}'
+        WHERE SNOWFLAKE_ROLE = '${sanitizeInput(effectiveRole)}'
         AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
     `;
     
@@ -256,8 +390,8 @@ app.get('/api/my-roles', async (req, res) => {
 });
 
 // Change the current session role
-// Note: In SPCS, the actual session role is fixed. This endpoint validates 
-// the role is available and returns success so the UI can track the selection.
+// Note: In SPCS, the actual Snowflake session role is fixed by the service.
+// This endpoint stores the user's role selection and uses it for permission checks.
 app.post('/api/change-role', async (req, res) => {
     const { role } = req.body;
     
@@ -295,7 +429,9 @@ app.post('/api/change-role', async (req, res) => {
             });
         }
         
-        console.log(`Role change: User ${spcsUser} selected role ${role}`);
+        // Store the user's role selection
+        userRoleSelections.set(spcsUser, role);
+        console.log(`✅ Role change: User ${spcsUser} selected role ${role} (stored for permission checks)`);
         
         res.json({ 
             success: true,
@@ -667,19 +803,19 @@ app.post('/api/revoke-service-access', async (req, res) => {
     }
 });
 
-// Get current user's permissions based on their SPCS role header
+// Get current user's permissions based on their selected role (or SPCS default)
 app.get('/api/my-permissions', async (req, res) => {
     let connection;
     
     try {
         connection = await connectToSnowflake(req);
         
-        const spcsRole = req.headers['sf-context-current-role'] || 'PUBLIC';
+        const effectiveRole = getEffectiveRole(req);
         
         const query = `
             SELECT rp.PERMISSION_TYPE
             FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS rp
-            WHERE rp.SNOWFLAKE_ROLE = '${sanitizeInput(spcsRole)}'
+            WHERE rp.SNOWFLAKE_ROLE = '${sanitizeInput(effectiveRole)}'
         `;
         
         const rows = await executeQuery(connection, query);
@@ -687,6 +823,7 @@ app.get('/api/my-permissions', async (req, res) => {
         
         res.json({ 
             success: true,
+            role: effectiveRole,
             permissions: permissions,
             hasAppAccess: permissions.includes('APP_ACCESS'),
             canCreateRequests: permissions.includes('CREATE_REQUESTS'),
@@ -714,10 +851,12 @@ app.get('/api/check-permission/:permissionType', async (req, res) => {
     try {
         connection = await connectToSnowflake(req);
         
+        const effectiveRole = getEffectiveRole(req);
+        
         const query = `
             SELECT COUNT(*) as HAS_PERMISSION
             FROM CATALOG_DB.CATALOG_SCHEMA.ROLE_PERMISSIONS
-            WHERE SNOWFLAKE_ROLE = CURRENT_ROLE()
+            WHERE SNOWFLAKE_ROLE = '${sanitizeInput(effectiveRole)}'
             AND PERMISSION_TYPE = '${sanitizeInput(permissionType)}'
         `;
         const rows = await executeQuery(connection, query);
@@ -1778,17 +1917,15 @@ app.get('/api/tags', async (req, res) => {
         
         const tags = await executeQuery(connection, tagsQuery);
         
-        // Get usage counts and values from TAG_REFERENCES
+        // Get usage counts and values from TAG_CACHE instead of ACCOUNT_USAGE
         const countAndValuesQuery = `
             SELECT 
-                TAG_DATABASE || '.' || TAG_SCHEMA || '.' || TAG_NAME as FULL_TAG_NAME,
+                FULL_TAG_NAME,
                 COUNT(DISTINCT OBJECT_NAME) as COUNT,
                 ARRAY_AGG(DISTINCT TAG_VALUE) as TAG_VALUES
-            FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
-            WHERE OBJECT_DOMAIN = 'TABLE'
-              AND DELETED IS NULL
-              AND TAG_VALUE IS NOT NULL
-            GROUP BY TAG_DATABASE, TAG_SCHEMA, TAG_NAME
+            FROM CATALOG_DB.CATALOG_SCHEMA.TAG_CACHE
+            WHERE TAG_VALUE IS NOT NULL
+            GROUP BY FULL_TAG_NAME
         `;
         
         let countMap = {};
